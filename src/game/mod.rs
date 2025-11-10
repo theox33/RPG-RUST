@@ -35,16 +35,19 @@ pub enum TileType {
 /// Regroupe toutes les textures nécessaires au rendu et leurs rectangles de
 /// découpe. La feuille de carte (`map_texture`) est découpée en deux zones :
 /// l'herbe (`herbe_src`) et le chemin (`chemin_src`). La feuille
-/// d'animation (`char_texture`) contient 3 colonnes et 3 lignes de frames ;
-/// les rectangles correspondants sont stockés dans `char_frames`.
+/// d'animation (`char_texture`) contient 3 colonnes et 4 lignes de frames ;
+/// les rectangles correspondants sont stockés dans `char_frames`. Les ennemis
+/// utilisent une feuille séparée (`enemy_texture`) découpée en 2 colonnes × 3
+/// lignes pour 6 frames.
 pub struct GameTextures {
     pub map_texture: Texture2D,
     pub herbe_src: Rect,
     pub chemin_src: Rect,
     pub char_texture: Texture2D,
     pub char_frames: Vec<Rect>,
-    /// Différentes variantes d'herbe découpées dans la feuille de texture.
     pub grass_variants: Vec<Rect>,
+    pub enemy_texture: Texture2D,
+    pub enemy_frames: Vec<Rect>,
 }
 
 /// Directions possibles du personnage. Chaque direction dispose d'un nombre
@@ -60,9 +63,7 @@ enum Direction {
 /// Animation du personnage principal. Stocke la direction courante du personnage,
 /// l'indice de frame en cours et un accumulateur de temps pour faire défiler
 /// les animations. Le personnage possède un nombre variable de frames selon
-/// la direction : 1 frame pour la position statique (vers le bas), 2 frames
-/// pour marcher vers la droite, 3 frames pour marcher vers la gauche et
-/// 3 frames pour marcher vers le haut.
+/// la direction : 3 frames pour chaque direction.
 #[derive(Clone)]
 struct PlayerAnim {
     direction: Direction,
@@ -82,15 +83,11 @@ impl PlayerAnim {
     }
 
     /// Met à jour l'animation en fonction du temps écoulé et du déplacement.
-    /// Si le personnage se déplace, l'index de frame est incrémenté lorsque
-    /// le temps accumulé dépasse `frame_duration`. Sinon, l'animation est
-    /// réinitialisée.
     fn update(&mut self, dt: f32, moving: bool) {
         if moving {
             self.timer += dt;
             if self.timer > self.frame_duration {
                 self.timer -= self.frame_duration;
-                // Chaque direction possède désormais 3 frames
                 let max_frames = 3;
                 self.frame = (self.frame + 1) % max_frames;
             }
@@ -103,14 +100,26 @@ impl PlayerAnim {
     /// Retourne l'indice du rectangle source à utiliser dans la spritesheet.
     fn current_frame_index(&self) -> usize {
         match self.direction {
-            // La spritesheet est organisée en 4 lignes de 3 frames chacune :
-            // ligne 0 = bas, ligne 1 = droite, ligne 2 = gauche, ligne 3 = haut.
             Direction::Down => 0 + self.frame,
             Direction::Right => 3 + self.frame,
             Direction::Left => 6 + self.frame,
             Direction::Up => 9 + self.frame,
         }
     }
+}
+
+/// Animation et état de déplacement d'un ennemi (slime). Chaque déplacement
+/// utilise 6 frames : 3 pour la montée (colonne gauche) et 3 pour
+/// l'atterrissage (colonne droite lue de bas en haut).
+#[derive(Clone)]
+struct EnemyAnim {
+    moving: bool,
+    from: Position,
+    to: Position,
+    progress: f32,
+    frame: usize,
+    timer: f32,
+    frame_duration: f32,
 }
 
 pub struct Game {
@@ -120,18 +129,14 @@ pub struct Game {
     textures: GameTextures,
     map_tiles: Vec<Vec<TileType>>,
     player_anim: PlayerAnim,
-    /// Indique si le joueur est en train de glisser d'une case à l'autre.
     moving: bool,
-    /// Temps total en secondes pour parcourir une case lors du déplacement.
     move_time: f32,
-    /// Progrès du déplacement courant (entre 0.0 et 1.0).
     move_progress: f32,
-    /// Coordonnées de départ du déplacement en cours.
     move_from: Position,
-    /// Coordonnées d'arrivée du déplacement en cours.
     move_to: Position,
-    /// Pour chaque tuile d'herbe, index de la variante à utiliser.
     grass_choice: Vec<Vec<usize>>,
+    enemy_anim: Vec<EnemyAnim>,
+    enemy_prev_positions: Vec<Position>,
 }
 
 enum GameState {
@@ -146,14 +151,11 @@ struct Message {
 
 impl Game {
     /// Crée un nouveau jeu à partir des textures fournies. La carte est
-    /// générée avec une grille d'herbe et un chemin. Le joueur est placé au
-    /// point de départ défini par `PLAYER_START_X` et `PLAYER_START_Y` et des
-    /// ennemis sont générés aléatoirement sur les cases d'herbe jusqu'à
-    /// `MAX_ENEMIES`. Un thread est lancé pour déplacer les ennemis.
-    pub fn new(map_texture: Texture2D, char_texture: Texture2D) -> Self {
-        // Générer la carte (herbe + chemin)
+    /// générée avec de l'herbe et un chemin. Les ennemis utilisent une feuille
+    /// de texture séparée pour leur animation.
+    pub fn new(map_texture: Texture2D, char_texture: Texture2D, enemy_texture: Texture2D) -> Self {
+        // Générer la grille de la carte
         let map_tiles = generate_map_tiles(MAP_WIDTH, MAP_HEIGHT, PLAYER_START_X, PLAYER_START_Y);
-
         // Initialiser le monde et ajouter le joueur
         let mut world = World::new(MAP_WIDTH, MAP_HEIGHT);
         world.add_player(Personnage::nouveau_joueur(
@@ -164,17 +166,12 @@ impl Game {
                 y: PLAYER_START_Y,
             },
         ));
-
-        // Générer des ennemis sur les cases d'herbe libres
+        // Générer des ennemis sur les cases d'herbe
         spawn_random_enemies(&mut world, &map_tiles, MAX_ENEMIES);
-
-        // Définir les sous-rectangles pour l'herbe et le chemin. Ces valeurs
-        // sont calculées manuellement à partir de la feuille de texture.
+        // Définir les rectangles sources pour l'herbe et le chemin
         let herbe_src = Rect::new(20.0, 20.0, 100.0, 100.0);
         let chemin_src = Rect::new(300.0, 20.0, 100.0, 100.0);
-
-        // Définir les variantes d'herbe (5 variantes) découpées manuellement dans la
-        // feuille de texture. Ces coordonnées doivent être ajustées selon votre spritesheet.
+        // Variantes d'herbe (5 variantes)
         let grass_variants = vec![
             Rect::new(20.0, 20.0, 100.0, 100.0),
             Rect::new(170.0, 20.0, 100.0, 100.0),
@@ -182,21 +179,11 @@ impl Game {
             Rect::new(450.0, 170.0, 100.0, 100.0),
             Rect::new(450.0, 320.0, 100.0, 100.0),
         ];
-
-        // Créer la liste de frames pour l'animation du personnage (3 colonnes × 4 lignes).
-        // Les frames sont décalées de quelques pixels vers le bas (offset_y) pour éviter
-        // d'inclure des pixels de la ligne supérieure.
-        // La spritesheet du personnage est organisée en 3 colonnes × 3 lignes.
-        // Nous appliquons un léger décalage vertical (offset_y) pour éviter
-        // d’afficher des pixels résiduels provenant de la ligne supérieure.
-        // De plus, la hauteur de découpe est réduite de ce même offset pour
-        // n’extraire que la zone utile de chaque frame.
+        // Découper les frames du personnage (3 colonnes × 4 lignes)
         let cols = 3;
-        // La spritesheet comporte maintenant 4 rangées (bas, droite, gauche, haut)
         let rows = 4;
         let cw = char_texture.width() / cols as f32;
         let ch = char_texture.height() / rows as f32;
-        // Décalage vertical en pixels pour ignorer la bordure entre les frames.
         let offset_y = 2.0;
         let mut char_frames = Vec::new();
         for row in 0..rows {
@@ -209,7 +196,21 @@ impl Game {
                 ));
             }
         }
-
+        // Découper les frames de l'ennemi (2 colonnes × 3 lignes)
+        let e_cols = 2;
+        let e_rows = 3;
+        let ecw = enemy_texture.width() / e_cols as f32;
+        let ech = enemy_texture.height() / e_rows as f32;
+        let mut enemy_frames = Vec::new();
+        // Colonne gauche : montée
+        for row in 0..e_rows {
+            enemy_frames.push(Rect::new(0.0, row as f32 * ech, ecw, ech));
+        }
+        // Colonne droite : atterrissage (du bas vers le haut)
+        for row in (0..e_rows).rev() {
+            enemy_frames.push(Rect::new(ecw, row as f32 * ech, ecw, ech));
+        }
+        // Construire la structure GameTextures
         let textures = GameTextures {
             map_texture,
             herbe_src,
@@ -217,9 +218,29 @@ impl Game {
             char_texture,
             char_frames,
             grass_variants,
+            enemy_texture,
+            enemy_frames,
         };
-
-        // Partager le monde entre le thread principal et le thread secondaire
+        // Capturer les positions initiales des ennemis avant de placer le monde dans un Arc
+        let initial_enemy_positions: Vec<Position> = world
+            .enemies()
+            .iter()
+            .map(|e| e.position())
+            .collect();
+        let enemy_anim = initial_enemy_positions
+            .iter()
+            .map(|pos| EnemyAnim {
+                moving: false,
+                from: *pos,
+                to: *pos,
+                progress: 0.0,
+                frame: 0,
+                timer: 0.0,
+                frame_duration: 0.0,
+            })
+            .collect::<Vec<EnemyAnim>>();
+        let enemy_prev_positions = initial_enemy_positions.clone();
+        // Partager le monde entre threads
         let world = Arc::new(Mutex::new(world));
         let thread_world = Arc::clone(&world);
         thread::spawn(move || {
@@ -233,8 +254,7 @@ impl Game {
                 thread::sleep(Duration::from_millis(tick_ms));
             }
         });
-
-        // Tirer une variante aléatoire pour chaque tuile d'herbe
+        // Choisir une variante d'herbe pour chaque case d'herbe
         let mut rng = thread_rng();
         let grass_choice = (0..MAP_HEIGHT)
             .map(|y| {
@@ -249,7 +269,7 @@ impl Game {
                     .collect::<Vec<usize>>()
             })
             .collect::<Vec<Vec<usize>>>();
-
+        // Retourner la structure Game
         Self {
             world,
             state: GameState::Exploration,
@@ -258,18 +278,13 @@ impl Game {
             map_tiles,
             player_anim: PlayerAnim::new(),
             moving: false,
-            // Durée d'une glissade entre deux cases (en secondes). Augmentée pour que l'animation soit plus visible.
             move_time: 0.3,
             move_progress: 0.0,
-            move_from: Position {
-                x: PLAYER_START_X,
-                y: PLAYER_START_Y,
-            },
-            move_to: Position {
-                x: PLAYER_START_X,
-                y: PLAYER_START_Y,
-            },
+            move_from: Position { x: PLAYER_START_X, y: PLAYER_START_Y },
+            move_to: Position { x: PLAYER_START_X, y: PLAYER_START_Y },
             grass_choice,
+            enemy_anim,
+            enemy_prev_positions,
         }
     }
 
@@ -277,9 +292,9 @@ impl Game {
         clear_background(LIGHTGRAY);
         let dt = get_frame_time();
         self.update_messages(dt);
-        // D'abord mettre à jour l'avancement du déplacement en cours avant toute logique de jeu.
         if matches!(self.state, GameState::Exploration) {
             self.update_movement(dt);
+            self.update_enemy_movement(dt);
             self.update_exploration(dt);
         } else {
             self.update_combat_state();
@@ -287,15 +302,64 @@ impl Game {
         self.render();
     }
 
-    /// Met à jour l'animation de déplacement. Lorsque `moving` est vrai, on
-    /// incrémente `move_progress` en fonction du temps écoulé et on termine le
-    /// mouvement lorsque la valeur dépasse 1.0.
+    /// Met à jour la progression du déplacement du joueur.
     fn update_movement(&mut self, dt: f32) {
         if self.moving {
             self.move_progress += dt / self.move_time;
             if self.move_progress >= 1.0 {
                 self.moving = false;
                 self.move_progress = 0.0;
+            }
+        }
+    }
+
+    /// Met à jour l'animation et la glissade des ennemis.
+    fn update_enemy_movement(&mut self, dt: f32) {
+        let current_positions: Vec<Position> = {
+            let world = self.world.lock().unwrap();
+            world.enemies().iter().map(|e| e.position()).collect()
+        };
+        while self.enemy_anim.len() < current_positions.len() {
+            self.enemy_anim.push(EnemyAnim {
+                moving: false,
+                from: current_positions[self.enemy_anim.len()],
+                to: current_positions[self.enemy_anim.len()],
+                progress: 0.0,
+                frame: 0,
+                timer: 0.0,
+                frame_duration: 0.0,
+            });
+            self.enemy_prev_positions.push(current_positions[self.enemy_prev_positions.len()]);
+        }
+        for i in 0..current_positions.len() {
+            let pos = current_positions[i];
+            let prev = self.enemy_prev_positions[i];
+            let anim = &mut self.enemy_anim[i];
+            if anim.moving {
+                anim.progress += dt / self.move_time;
+                anim.timer += dt;
+                if anim.frame_duration > 0.0 && anim.timer > anim.frame_duration {
+                    anim.timer -= anim.frame_duration;
+                    anim.frame = (anim.frame + 1) % 6;
+                }
+                if anim.progress >= 1.0 {
+                    anim.moving = false;
+                    anim.progress = 0.0;
+                    anim.frame = 0;
+                    anim.timer = 0.0;
+                    self.enemy_prev_positions[i] = anim.to;
+                }
+            } else {
+                if pos.x != prev.x || pos.y != prev.y {
+                    anim.moving = true;
+                    anim.from = prev;
+                    anim.to = pos;
+                    anim.progress = 0.0;
+                    anim.frame = 0;
+                    anim.timer = 0.0;
+                    anim.frame_duration = self.move_time / 6.0;
+                    self.enemy_prev_positions[i] = pos;
+                }
             }
         }
     }
@@ -312,22 +376,12 @@ impl Game {
     }
 
     fn update_exploration(&mut self, dt: f32) {
-        // Si le joueur est en train de glisser d'une case à l'autre, on met simplement
-        // à jour l'animation et on retourne sans tenter de lancer un nouveau déplacement.
         if self.moving {
-            // Mettre à jour l'animation pendant la glisse.
             self.player_anim.update(dt, true);
             return;
         }
-
-        // Déplacement sur la grille : on déplace le joueur d'une case par pression de touche,
-        // mais l'animation doit continuer tant que la touche reste enfoncée. On sépare donc
-        // la détection du mouvement (pour déplacer) et la détection de l'appui continu (pour animer).
         let mut dx: isize = 0;
         let mut dy: isize = 0;
-
-        // Déterminer le déplacement souhaité en fonction des touches enfoncées (QWERTY et AZERTY).
-        // On utilise `is_key_down` afin de permettre la répétition du mouvement quand la touche est maintenue.
         if is_key_down(KeyCode::Up) || is_key_down(KeyCode::Z) {
             dy = -1;
         } else if is_key_down(KeyCode::Down) || is_key_down(KeyCode::S) {
@@ -338,14 +392,8 @@ impl Game {
         } else if is_key_down(KeyCode::Left) || is_key_down(KeyCode::Q) {
             dx = -1;
         }
-
-        // Le personnage est en mouvement si au moins une touche directionnelle est enfoncée.
         let moving_input = dx != 0 || dy != 0;
-
         if moving_input {
-            // Choisir la direction en fonction des touches maintenues. L'ordre de
-            // priorité est donné par la superposition verticale puis horizontale :
-            // les déplacements horizontaux écrasent les déplacements verticaux.
             if is_key_down(KeyCode::Up) || is_key_down(KeyCode::Z) {
                 self.player_anim.direction = Direction::Up;
             } else if is_key_down(KeyCode::Down) || is_key_down(KeyCode::S) {
@@ -357,40 +405,25 @@ impl Game {
                 self.player_anim.direction = Direction::Left;
             }
         }
-        // Mettre à jour l'animation du joueur en fonction du temps écoulé et de l'appui
         self.player_anim.update(dt, moving_input);
-
         let mut world = self.world.lock().unwrap();
-        // Déplacer le joueur d'une case lorsque l'on détecte une pression de touche
         if dx != 0 || dy != 0 {
-            // Mémoriser la position avant déplacement
             let old_pos = world.players()[0].position();
             let moved = world.move_player(0, dx, dy);
             if moved {
-                // Mémoriser la position après déplacement
                 let new_pos = world.players()[0].position();
-                // Initialiser l'interpolation de déplacement
                 self.moving = true;
                 self.move_progress = 0.0;
-                self.move_from = Position {
-                    x: old_pos.x,
-                    y: old_pos.y,
-                };
-                self.move_to = Position {
-                    x: new_pos.x,
-                    y: new_pos.y,
-                };
-                // Réinitialiser l'animation pour démarrer sur la première frame
+                self.move_from = Position { x: old_pos.x, y: old_pos.y };
+                self.move_to = Position { x: new_pos.x, y: new_pos.y };
                 self.player_anim.frame = 0;
                 self.player_anim.timer = 0.0;
-                // Adapter la durée d'une frame en fonction du nombre de frames pour cette direction (3 frames par direction)
                 let nframes = 3;
                 self.player_anim.frame_duration = self.move_time / nframes as f32;
                 self.messages.push(Message {
                     texte: String::from("Vous vous déplacez."),
                     timer: 0.6,
                 });
-                // Vérifier immédiatement si un combat doit être lancé
                 if let Some((p_idx, e_idx)) = world.find_adjacent_pair() {
                     self.messages.push(Message {
                         texte: String::from("Un ennemi est proche : combat engagé !"),
@@ -464,7 +497,6 @@ impl Game {
                 let y_f = y as f32 * TILE_SIZE;
                 match self.map_tiles[y][x] {
                     TileType::Herbe => {
-                        // Choisir la variante d'herbe pour cette case
                         let variant_index = self.grass_choice[y][x];
                         let src = self.textures.grass_variants[variant_index];
                         draw_texture_ex(
@@ -498,11 +530,8 @@ impl Game {
     }
 
     fn draw_entities(&self, world: &World) {
-        // Dessiner le joueur
         for p in world.players() {
             if p.est_vivant() {
-                // Déterminer la position affichée. Si un déplacement est en cours, on interpole
-                // entre les coordonnées d'origine et de destination selon move_progress.
                 let (x_f, y_f) = if self.moving {
                     let from_x = self.move_from.x as f32;
                     let from_y = self.move_from.y as f32;
@@ -531,18 +560,33 @@ impl Game {
                 );
             }
         }
-        // Dessiner les ennemis comme des rectangles rouges pour l'instant
-        for e in world.enemies() {
+        for (i, e) in world.enemies().iter().enumerate() {
             if e.est_vivant() {
-                let pos = e.position();
-                let x_f = pos.x as f32 * TILE_SIZE;
-                let y_f = pos.y as f32 * TILE_SIZE;
-                draw_rectangle(
-                    x_f + 6.0,
-                    y_f + 6.0,
-                    TILE_SIZE - 12.0,
-                    TILE_SIZE - 12.0,
-                    RED,
+                let anim = &self.enemy_anim[i];
+                let (x_f, y_f) = if anim.moving {
+                    let from_x = anim.from.x as f32;
+                    let from_y = anim.from.y as f32;
+                    let to_x = anim.to.x as f32;
+                    let to_y = anim.to.y as f32;
+                    let interp_x = from_x + (to_x - from_x) * anim.progress;
+                    let interp_y = from_y + (to_y - from_y) * anim.progress;
+                    (interp_x * TILE_SIZE, interp_y * TILE_SIZE)
+                } else {
+                    let pos = e.position();
+                    (pos.x as f32 * TILE_SIZE, pos.y as f32 * TILE_SIZE)
+                };
+                let frame_index = self.enemy_anim[i].frame;
+                let src = self.textures.enemy_frames[frame_index];
+                draw_texture_ex(
+                    &self.textures.enemy_texture,
+                    x_f,
+                    y_f,
+                    WHITE,
+                    DrawTextureParams {
+                        dest_size: Some(Vec2::new(TILE_SIZE, TILE_SIZE)),
+                        source: Some(src),
+                        ..Default::default()
+                    },
                 );
             }
         }
@@ -572,8 +616,7 @@ impl Game {
 }
 
 /// Génère la grille des tuiles (herbe ou chemin). Le chemin part de
-/// `(start_x, start_y)` et s'étend vers le haut jusqu'en Y=0 puis vers la droite
-/// jusqu'à `width - 1`.
+/// `(start_x, start_y)` et s'étend vers le haut puis vers la droite.
 fn generate_map_tiles(
     width: usize,
     height: usize,
@@ -581,11 +624,9 @@ fn generate_map_tiles(
     start_y: usize,
 ) -> Vec<Vec<TileType>> {
     let mut tiles = vec![vec![TileType::Herbe; width]; height];
-    // Chemin vertical vers le haut (y de 0 à start_y inclus)
     for y in 0..=start_y {
         tiles[y][start_x] = TileType::Chemin;
     }
-    // Chemin horizontal vers la droite (x de start_x à width-1 inclus)
     for x in start_x..width {
         tiles[start_y][x] = TileType::Chemin;
     }
