@@ -88,12 +88,8 @@ impl PlayerAnim {
             self.timer += dt;
             if self.timer > self.frame_duration {
                 self.timer -= self.frame_duration;
-                let max_frames = match self.direction {
-                    Direction::Down => 1,
-                    Direction::Right => 2,
-                    Direction::Left => 3,
-                    Direction::Up => 3,
-                };
+                // Chaque direction possède désormais 3 frames
+                let max_frames = 3;
                 self.frame = (self.frame + 1) % max_frames;
             }
         } else {
@@ -105,10 +101,12 @@ impl PlayerAnim {
     /// Retourne l'indice du rectangle source à utiliser dans la spritesheet.
     fn current_frame_index(&self) -> usize {
         match self.direction {
-            Direction::Down => 0,
-            Direction::Right => 1 + self.frame,
-            Direction::Left => 3 + self.frame,
-            Direction::Up => 6 + self.frame,
+            // La spritesheet est organisée en 4 lignes de 3 frames chacune :
+            // ligne 0 = bas, ligne 1 = droite, ligne 2 = gauche, ligne 3 = haut.
+            Direction::Down => 0 + self.frame,
+            Direction::Right => 3 + self.frame,
+            Direction::Left => 6 + self.frame,
+            Direction::Up => 9 + self.frame,
         }
     }
 }
@@ -171,7 +169,7 @@ impl Game {
         let herbe_src = Rect::new(20.0, 20.0, 100.0, 100.0);
         let chemin_src = Rect::new(300.0, 20.0, 100.0, 100.0);
 
-        // Créer la liste de frames pour l'animation du personnage (3 colonnes × 3 lignes).
+        // Créer la liste de frames pour l'animation du personnage (3 colonnes × 4 lignes).
         // Les frames sont décalées de quelques pixels vers le bas (offset_y) pour éviter
         // d'inclure des pixels de la ligne supérieure.
         // La spritesheet du personnage est organisée en 3 colonnes × 3 lignes.
@@ -180,7 +178,8 @@ impl Game {
         // De plus, la hauteur de découpe est réduite de ce même offset pour
         // n’extraire que la zone utile de chaque frame.
         let cols = 3;
-        let rows = 3;
+        // La spritesheet comporte maintenant 4 rangées (bas, droite, gauche, haut)
+        let rows = 4;
         let cw = char_texture.width() / cols as f32;
         let ch = char_texture.height() / rows as f32;
         // Décalage vertical en pixels pour ignorer la bordure entre les frames.
@@ -349,13 +348,8 @@ impl Game {
                     x: new_pos.x,
                     y: new_pos.y,
                 };
-                // Adapter la durée d'une frame en fonction du nombre de frames pour cette direction
-                let nframes = match self.player_anim.direction {
-                    Direction::Down => 1,
-                    Direction::Right => 2,
-                    Direction::Left => 3,
-                    Direction::Up => 3,
-                };
+                // Adapter la durée d'une frame en fonction du nombre de frames pour cette direction (3 frames par direction)
+                let nframes = 3;
                 self.player_anim.frame_duration = self.move_time / nframes as f32;
                 self.messages.push(Message {
                     texte: String::from("Vous vous déplacez."),
