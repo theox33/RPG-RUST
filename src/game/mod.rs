@@ -348,6 +348,9 @@ impl Game {
                     x: new_pos.x,
                     y: new_pos.y,
                 };
+                // Réinitialiser l'animation pour démarrer sur la première frame
+                self.player_anim.frame = 0;
+                self.player_anim.timer = 0.0;
                 // Adapter la durée d'une frame en fonction du nombre de frames pour cette direction (3 frames par direction)
                 let nframes = 3;
                 self.player_anim.frame_duration = self.move_time / nframes as f32;
