@@ -11,7 +11,12 @@ pub struct World {
 
 impl World {
     pub fn new(width: usize, height: usize) -> Self {
-        World { width, height, players: Vec::new(), enemies: Vec::new() }
+        World {
+            width,
+            height,
+            players: Vec::new(),
+            enemies: Vec::new(),
+        }
     }
 
     pub fn add_player(&mut self, p: Personnage) {
@@ -27,18 +32,28 @@ impl World {
     }
 
     fn is_cell_free(&self, x: usize, y: usize) -> bool {
-        self.players.iter().filter(|p| p.est_vivant()).all(|p| {
-            let pos = p.position();
-            !(pos.x == x && pos.y == y)
-        }) && self.enemies.iter().filter(|e| e.est_vivant()).all(|e| {
-            let pos = e.position();
-            !(pos.x == x && pos.y == y)
-        })
+        self.players
+            .iter()
+            .filter(|p| p.est_vivant())
+            .all(|p| {
+                let pos = p.position();
+                !(pos.x == x && pos.y == y)
+            })
+            && self
+                .enemies
+                .iter()
+                .filter(|e| e.est_vivant())
+                .all(|e| {
+                    let pos = e.position();
+                    !(pos.x == x && pos.y == y)
+                })
     }
 
     pub fn move_player(&mut self, player_id: usize, dx: isize, dy: isize) -> bool {
         if let Some(idx) = self.players.iter().position(|p| p.id() == player_id) {
-            if !self.players[idx].est_vivant() { return false; }
+            if !self.players[idx].est_vivant() {
+                return false;
+            }
             let current = self.players[idx].position();
             let nx = current.x as isize + dx;
             let ny = current.y as isize + dy;
@@ -59,10 +74,17 @@ impl World {
     }
 
     pub fn step_enemies(&mut self) {
-        let players_snapshot: Vec<_> = self.players.iter().filter(|p| p.est_vivant()).map(|p| (p.id(), p.position())).collect();
+        let players_snapshot: Vec<_> = self
+            .players
+            .iter()
+            .filter(|p| p.est_vivant())
+            .map(|p| (p.id(), p.position()))
+            .collect();
 
         let mut occupied: HashSet<(usize, usize)> = HashSet::new();
-        for (_, pos) in &players_snapshot { occupied.insert((pos.x, pos.y)); }
+        for (_, pos) in &players_snapshot {
+            occupied.insert((pos.x, pos.y));
+        }
         for e in &self.enemies {
             if e.est_vivant() {
                 let pos = e.position();
@@ -73,16 +95,33 @@ impl World {
         let mut new_positions: Vec<Option<Position>> = vec![None; self.enemies.len()];
 
         for (i, enemy) in self.enemies.iter().enumerate() {
-            if !enemy.est_vivant() { continue; }
-            if let Some((_, target_pos)) = players_snapshot.iter().min_by_key(|(_, pos)| {
-                let dx = (pos.x as isize - enemy.position().x as isize).abs();
-                let dy = (pos.y as isize - enemy.position().y as isize).abs();
-                (dx + dy) as usize
-            }) {
+            if !enemy.est_vivant() {
+                continue;
+            }
+            if let Some((_, target_pos)) = players_snapshot
+                .iter()
+                .min_by_key(|(_, pos)| {
+                    let dx = (pos.x as isize - enemy.position().x as isize).abs();
+                    let dy = (pos.y as isize - enemy.position().y as isize).abs();
+                    (dx + dy) as usize
+                })
+            {
                 let dx = target_pos.x as isize - enemy.position().x as isize;
                 let dy = target_pos.y as isize - enemy.position().y as isize;
-                let step_x = if dx == 0 { 0 } else if dx > 0 { 1 } else { -1 };
-                let step_y = if dy == 0 { 0 } else if dy > 0 { 1 } else { -1 };
+                let step_x = if dx == 0 {
+                    0
+                } else if dx > 0 {
+                    1
+                } else {
+                    -1
+                };
+                let step_y = if dy == 0 {
+                    0
+                } else if dy > 0 {
+                    1
+                } else {
+                    -1
+                };
 
                 let try_moves = [(step_x, 0), (0, step_y)];
                 for (sx, sy) in try_moves.iter() {
@@ -115,7 +154,9 @@ impl World {
     /// Utilise `dt` (en secondes) comme intervalle écoulé depuis le dernier tick.
     /// Évite les collisions avec les joueurs et entre ennemis.
     pub fn wander_enemies(&mut self, dt: f32) {
-        if dt <= 0.0 { return; }
+        if dt <= 0.0 {
+            return;
+        }
 
         // Snapshot des positions des joueurs vivants
         let players_snapshot: Vec<_> = self
@@ -127,7 +168,9 @@ impl World {
 
         // Occupation initiale
         let mut occupied = std::collections::HashSet::<(usize, usize)>::new();
-        for (_, pos) in &players_snapshot { occupied.insert((pos.x, pos.y)); }
+        for (_, pos) in &players_snapshot {
+            occupied.insert((pos.x, pos.y));
+        }
         for e in &self.enemies {
             if e.est_vivant() {
                 let pos = e.position();
@@ -141,11 +184,15 @@ impl World {
         let mut new_positions: Vec<Option<Position>> = vec![None; self.enemies.len()];
 
         for (i, enemy) in self.enemies.iter_mut().enumerate() {
-            if !enemy.est_vivant() { continue; }
+            if !enemy.est_vivant() {
+                continue;
+            }
 
-            // Combien de pas sont dus avec ce dt ? On ne tente qu'un pas par tick.
+            // Combien de pas sont dus avec ce dt ? On ne tente qu'un pas par tick.
             let steps = enemy.steps_due(dt);
-            if steps == 0 { continue; }
+            if steps == 0 {
+                continue;
+            }
 
             let current = enemy.position();
             // Essayer jusqu'à 4 directions aléatoires pour trouver une case libre
@@ -188,13 +235,20 @@ impl World {
 
     pub fn find_adjacent_pair(&self) -> Option<(usize, usize)> {
         for (pi, p) in self.players.iter().enumerate() {
-            if !p.est_vivant() { continue; }
+            if !p.est_vivant() {
+                continue;
+            }
             for (ei, e) in self.enemies.iter().enumerate() {
-                if !e.est_vivant() { continue; }
+                if !e.est_vivant() {
+                    continue;
+                }
                 let p_pos = p.position();
                 let e_pos = e.position();
-                let dist = (p_pos.x as isize - e_pos.x as isize).abs() + (p_pos.y as isize - e_pos.y as isize).abs();
-                if dist == 1 { return Some((pi, ei)); }
+                let dist = (p_pos.x as isize - e_pos.x as isize).abs()
+                    + (p_pos.y as isize - e_pos.y as isize).abs();
+                if dist == 1 {
+                    return Some((pi, ei));
+                }
             }
         }
         None

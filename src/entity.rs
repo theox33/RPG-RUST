@@ -152,13 +152,13 @@ impl Personnage {
         // Nombre attendu de cellules à déplacer pendant dt (peut être fractional).
         let expected_moves = ENTITY_SPEED * dt;
 
-        // Déplacement entier (floor) : exécution déterministe de ces pas.
+        // Déplacement entier (floor) : exécution déterministe de ces pas.
         let steps = expected_moves.floor() as usize;
         for _ in 0..steps {
             Self::one_step_random(self, rng, max_x, max_y);
         }
 
-        // Partie fractionnaire : déplacement probabiliste.
+        // Partie fractionnaire : déplacement probabiliste.
         let frac = expected_moves - (steps as f32);
         if frac > 0.0 && rng.gen_bool(frac as f64) {
             Self::one_step_random(self, rng, max_x, max_y);
@@ -166,7 +166,7 @@ impl Personnage {
     }
 
     fn one_step_random<R: Rng>(&mut self, rng: &mut R, max_x: usize, max_y: usize) {
-        // Directions : 0 = haut, 1 = bas, 2 = gauche, 3 = droite
+        // Directions : 0 = haut, 1 = bas, 2 = gauche, 3 = droite
         let dir = rng.gen_range(0..4);
 
         let mut x = self.pos.x as isize;

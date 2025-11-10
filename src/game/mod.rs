@@ -9,6 +9,7 @@ use std::thread;
 use std::time::Duration;
 use ::rand::{thread_rng, Rng};
 
+/// Taille (en pixels) d'une cellule de la grille. Ajustez pour zoomer/dézoomer.
 pub const TILE_SIZE: f32 = 48.0;
 
 /// Largeur de la carte (nombre de colonnes).
@@ -34,7 +35,7 @@ pub enum TileType {
 /// Regroupe toutes les textures nécessaires au rendu et leurs rectangles de
 /// découpe. La feuille de carte (`map_texture`) est découpée en deux zones :
 /// l'herbe (`herbe_src`) et le chemin (`chemin_src`). La feuille
-/// d'animation (`char_texture`) contient 4 colonnes et 3 lignes de frames ;
+/// d'animation (`char_texture`) contient 3 colonnes et 3 lignes de frames ;
 /// les rectangles correspondants sont stockés dans `char_frames`.
 pub struct GameTextures {
     pub map_texture: Texture2D,
@@ -44,38 +45,70 @@ pub struct GameTextures {
     pub char_frames: Vec<Rect>,
 }
 
-/// Animation du personnage principal. Contient la ligne d'animation (`row`),
-/// l'indice de frame, un accumulateur de temps pour faire défiler les
-/// animations et un indicateur de retournement horizontal (`flip_x`).
+/// Directions possibles du personnage. Chaque direction dispose d'un nombre
+/// différent de frames d'animation.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Direction {
+    Down,
+    Right,
+    Left,
+    Up,
+}
+
+/// Animation du personnage principal. Stocke la direction courante du personnage,
+/// l'indice de frame en cours et un accumulateur de temps pour faire défiler
+/// les animations. Le personnage possède un nombre variable de frames selon
+/// la direction : 1 frame pour la position statique (vers le bas), 2 frames
+/// pour marcher vers la droite, 3 frames pour marcher vers la gauche et
+/// 3 frames pour marcher vers le haut.
 #[derive(Clone)]
 struct PlayerAnim {
-    row: usize,
+    direction: Direction,
     frame: usize,
     timer: f32,
     frame_duration: f32,
-    flip_x: bool,
 }
 
 impl PlayerAnim {
     fn new() -> Self {
         Self {
-            row: 0,
+            direction: Direction::Down,
             frame: 0,
             timer: 0.0,
             frame_duration: 0.2,
-            flip_x: false,
         }
     }
+
+    /// Met à jour l'animation en fonction du temps écoulé et du déplacement.
+    /// Si le personnage se déplace, l'index de frame est incrémenté lorsque
+    /// le temps accumulé dépasse `frame_duration`. Sinon, l'animation est
+    /// réinitialisée.
     fn update(&mut self, dt: f32, moving: bool) {
         if moving {
             self.timer += dt;
             if self.timer > self.frame_duration {
                 self.timer -= self.frame_duration;
-                self.frame = (self.frame + 1) % 4;
+                let max_frames = match self.direction {
+                    Direction::Down => 1,
+                    Direction::Right => 2,
+                    Direction::Left => 3,
+                    Direction::Up => 3,
+                };
+                self.frame = (self.frame + 1) % max_frames;
             }
         } else {
             self.frame = 0;
             self.timer = 0.0;
+        }
+    }
+
+    /// Retourne l'indice du rectangle source à utiliser dans la spritesheet.
+    fn current_frame_index(&self) -> usize {
+        match self.direction {
+            Direction::Down => 0,
+            Direction::Right => 1 + self.frame,
+            Direction::Left => 3 + self.frame,
+            Direction::Up => 6 + self.frame,
         }
     }
 }
@@ -111,7 +144,14 @@ impl Game {
 
         // Initialiser le monde et ajouter le joueur
         let mut world = World::new(MAP_WIDTH, MAP_HEIGHT);
-        world.add_player(Personnage::nouveau_joueur(0, Classe::Soldat, Position { x: PLAYER_START_X, y: PLAYER_START_Y }));
+        world.add_player(Personnage::nouveau_joueur(
+            0,
+            Classe::Soldat,
+            Position {
+                x: PLAYER_START_X,
+                y: PLAYER_START_Y,
+            },
+        ));
 
         // Générer des ennemis sur les cases d'herbe libres
         spawn_random_enemies(&mut world, &map_tiles, MAX_ENEMIES);
@@ -121,13 +161,29 @@ impl Game {
         let herbe_src = Rect::new(20.0, 20.0, 100.0, 100.0);
         let chemin_src = Rect::new(300.0, 20.0, 100.0, 100.0);
 
-        // Créer la liste de frames pour l'animation du personnage (4 colonnes × 3 lignes)
-        let cw = char_texture.width() / 4.0;
-        let ch = char_texture.height() / 3.0;
+        // Créer la liste de frames pour l'animation du personnage (3 colonnes × 3 lignes).
+        // Les frames sont décalées de quelques pixels vers le bas (offset_y) pour éviter
+        // d'inclure des pixels de la ligne supérieure.
+        // La spritesheet du personnage est organisée en 3 colonnes × 3 lignes.
+        // Nous appliquons un léger décalage vertical (offset_y) pour éviter
+        // d’afficher des pixels résiduels provenant de la ligne supérieure.
+        // De plus, la hauteur de découpe est réduite de ce même offset pour
+        // n’extraire que la zone utile de chaque frame.
+        let cols = 3;
+        let rows = 3;
+        let cw = char_texture.width() / cols as f32;
+        let ch = char_texture.height() / rows as f32;
+        // Décalage vertical en pixels pour ignorer la bordure entre les frames.
+        let offset_y = 2.0;
         let mut char_frames = Vec::new();
-        for row in 0..3 {
-            for col in 0..4 {
-                char_frames.push(Rect::new(col as f32 * cw, row as f32 * ch, cw, ch));
+        for row in 0..rows {
+            for col in 0..cols {
+                char_frames.push(Rect::new(
+                    col as f32 * cw,
+                    row as f32 * ch + offset_y,
+                    cw,
+                    ch - offset_y,
+                ));
             }
         }
 
@@ -191,31 +247,32 @@ impl Game {
         let mut dx: isize = 0;
         let mut dy: isize = 0;
         // Détecter les touches directionnelles (supporte AZERTY et QWERTY)
-        if is_key_pressed(KeyCode::Up) || is_key_pressed(KeyCode::Z) { dy = -1; }
-        if is_key_pressed(KeyCode::Down) || is_key_pressed(KeyCode::S) { dy = 1; }
-        if is_key_pressed(KeyCode::Left) || is_key_pressed(KeyCode::Q) { dx = -1; }
-        if is_key_pressed(KeyCode::Right) || is_key_pressed(KeyCode::D) { dx = 1; }
+        if is_key_pressed(KeyCode::Up) || is_key_pressed(KeyCode::Z) {
+            dy = -1;
+        }
+        if is_key_pressed(KeyCode::Down) || is_key_pressed(KeyCode::S) {
+            dy = 1;
+        }
+        if is_key_pressed(KeyCode::Left) || is_key_pressed(KeyCode::Q) {
+            dx = -1;
+        }
+        if is_key_pressed(KeyCode::Right) || is_key_pressed(KeyCode::D) {
+            dx = 1;
+        }
 
         let moving = dx != 0 || dy != 0;
         if moving {
-            // Choisir la ligne d'animation et la symétrie horizontale selon la direction
+            // Déterminer la direction en fonction du déplacement. L'ordre des tests
+            // correspond à la priorité : les déplacements horizontaux écrasent les déplacements verticaux.
             if dy < 0 {
-                // déplacement vers le haut -> dos (ligne 2)
-                self.player_anim.row = 2;
-                self.player_anim.flip_x = false;
+                self.player_anim.direction = Direction::Up;
             } else if dy > 0 {
-                // déplacement vers le bas -> face (ligne 0)
-                self.player_anim.row = 0;
-                self.player_anim.flip_x = false;
+                self.player_anim.direction = Direction::Down;
             }
             if dx > 0 {
-                // mouvement vers la droite -> profil (ligne 1) sans retournement
-                self.player_anim.row = 1;
-                self.player_anim.flip_x = false;
+                self.player_anim.direction = Direction::Right;
             } else if dx < 0 {
-                // mouvement vers la gauche -> profil (ligne 1) retourné horizontalement
-                self.player_anim.row = 1;
-                self.player_anim.flip_x = true;
+                self.player_anim.direction = Direction::Left;
             }
         }
         // Mettre à jour l'animation du joueur
@@ -225,12 +282,18 @@ impl Game {
         if moving {
             let moved = world.move_player(0, dx, dy);
             if moved {
-                self.messages.push(Message { texte: String::from("Vous vous déplacez."), timer: 0.6 });
+                self.messages.push(Message {
+                    texte: String::from("Vous vous déplacez."),
+                    timer: 0.6,
+                });
             }
         }
         // Lancer un combat si un joueur et un ennemi sont adjacents
         if let Some((p_idx, e_idx)) = world.find_adjacent_pair() {
-            self.messages.push(Message { texte: String::from("Un ennemi est proche : combat engagé !"), timer: 1.2 });
+            self.messages.push(Message {
+                texte: String::from("Un ennemi est proche : combat engagé !"),
+                timer: 1.2,
+            });
             let player_speed = world.players()[p_idx].vitesse();
             let enemy_speed = world.enemies()[e_idx].vitesse();
             let player_first = player_speed >= enemy_speed;
@@ -244,7 +307,9 @@ impl Game {
         let mouse_click = if is_mouse_button_pressed(MouseButton::Left) {
             let (mx, my) = mouse_position();
             Some(Vec2::new(mx, my))
-        } else { None };
+        } else {
+            None
+        };
         let mut world = self.world.lock().unwrap();
         let input = CombatInput {
             keys_pressed: keys,
@@ -255,7 +320,10 @@ impl Game {
         let CombatResolution { messages, transition } = state.update(&mut world, &input);
         drop(world);
         for msg in messages {
-            self.messages.push(Message { texte: msg.texte, timer: msg.duree });
+            self.messages.push(Message {
+                texte: msg.texte,
+                timer: msg.duree,
+            });
         }
         !matches!(transition, CombatTransition::Terminer(_))
     }
@@ -329,7 +397,7 @@ impl Game {
                 let pos = p.position();
                 let x_f = pos.x as f32 * TILE_SIZE;
                 let y_f = pos.y as f32 * TILE_SIZE;
-                let index = self.player_anim.row * 4 + self.player_anim.frame;
+                let index = self.player_anim.current_frame_index();
                 let src = self.textures.char_frames[index];
                 draw_texture_ex(
                     &self.textures.char_texture,
@@ -339,7 +407,8 @@ impl Game {
                     DrawTextureParams {
                         dest_size: Some(Vec2::new(TILE_SIZE, TILE_SIZE)),
                         source: Some(src),
-                        flip_x: self.player_anim.flip_x,
+                        // Les frames gauche/droite sont distinctes, pas de retournement horizontal.
+                        flip_x: false,
                         ..Default::default()
                     },
                 );
@@ -351,7 +420,13 @@ impl Game {
                 let pos = e.position();
                 let x_f = pos.x as f32 * TILE_SIZE;
                 let y_f = pos.y as f32 * TILE_SIZE;
-                draw_rectangle(x_f + 6.0, y_f + 6.0, TILE_SIZE - 12.0, TILE_SIZE - 12.0, RED);
+                draw_rectangle(
+                    x_f + 6.0,
+                    y_f + 6.0,
+                    TILE_SIZE - 12.0,
+                    TILE_SIZE - 12.0,
+                    RED,
+                );
             }
         }
     }
@@ -366,9 +441,15 @@ impl Game {
 
     fn collect_combat_keys(&self) -> Vec<KeyCode> {
         let mut keys = Vec::new();
-        if is_key_pressed(KeyCode::A) { keys.push(KeyCode::A); }
-        if is_key_pressed(KeyCode::D) { keys.push(KeyCode::D); }
-        if is_key_pressed(KeyCode::F) { keys.push(KeyCode::F); }
+        if is_key_pressed(KeyCode::A) {
+            keys.push(KeyCode::A);
+        }
+        if is_key_pressed(KeyCode::D) {
+            keys.push(KeyCode::D);
+        }
+        if is_key_pressed(KeyCode::F) {
+            keys.push(KeyCode::F);
+        }
         keys
     }
 }
@@ -376,7 +457,12 @@ impl Game {
 /// Génère la grille des tuiles (herbe ou chemin). Le chemin part de
 /// `(start_x, start_y)` et s'étend vers le haut jusqu'en Y=0 puis vers la droite
 /// jusqu'à `width - 1`.
-fn generate_map_tiles(width: usize, height: usize, start_x: usize, start_y: usize) -> Vec<Vec<TileType>> {
+fn generate_map_tiles(
+    width: usize,
+    height: usize,
+    start_x: usize,
+    start_y: usize,
+) -> Vec<Vec<TileType>> {
     let mut tiles = vec![vec![TileType::Herbe; width]; height];
     // Chemin vertical vers le haut (y de 0 à start_y inclus)
     for y in 0..=start_y {
@@ -397,15 +483,28 @@ fn spawn_random_enemies(world: &mut World, tiles: &Vec<Vec<TileType>>, max_enemi
         let x = rng.gen_range(0..world.width);
         let y = rng.gen_range(0..world.height);
         if tiles[y][x] == TileType::Herbe {
-            let tile_free = world.players().iter().filter(|p| p.est_vivant()).all(|p| {
-                let pos = p.position();
-                pos.x != x || pos.y != y
-            }) && world.enemies().iter().filter(|e| e.est_vivant()).all(|e| {
-                let pos = e.position();
-                pos.x != x || pos.y != y
-            });
+            let tile_free = world
+                .players()
+                .iter()
+                .filter(|p| p.est_vivant())
+                .all(|p| {
+                    let pos = p.position();
+                    pos.x != x || pos.y != y
+                })
+                && world
+                    .enemies()
+                    .iter()
+                    .filter(|e| e.est_vivant())
+                    .all(|e| {
+                        let pos = e.position();
+                        pos.x != x || pos.y != y
+                    });
             if tile_free {
-                world.add_enemy(Personnage::nouvel_ennemi(next_id, Classe::Assassin, Position { x, y }));
+                world.add_enemy(Personnage::nouvel_ennemi(
+                    next_id,
+                    Classe::Assassin,
+                    Position { x, y },
+                ));
                 next_id += 1;
             }
         }

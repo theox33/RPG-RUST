@@ -99,28 +99,44 @@ impl CombatState {
                             }
                             self.enemy_defending = false;
                             self.player_turn = false;
-                            messages.push(CombatMessage { texte: format!("Vous attaquez et infligez {} dégâts", damage), duree: 1.0 });
+                            messages.push(CombatMessage {
+                                texte: format!("Vous attaquez et infligez {} dégâts", damage),
+                                duree: 1.0,
+                            });
                         }
                         PlayerAction::Defend => {
                             self.player_defending = true;
                             self.player_turn = false;
-                            messages.push(CombatMessage { texte: "Vous vous préparez à encaisser (dégâts réduits)".to_string(), duree: 0.8 });
+                            messages.push(CombatMessage {
+                                texte: "Vous vous préparez à encaisser (dégâts réduits)".to_string(),
+                                duree: 0.8,
+                            });
                         }
                         PlayerAction::Flee => {
                             let ps = world.players()[self.player_idx].vitesse();
                             let es = world.enemies()[self.enemy_idx].vitesse();
-                            let réussite = if ps > es { true } else { macroquad::rand::gen_range(0, 100) < 30 };
+                            let réussite = if ps > es {
+                                true
+                            } else {
+                                macroquad::rand::gen_range(0, 100) < 30
+                            };
                             if réussite {
                                 let player_id = world.players()[self.player_idx].id();
                                 let _ = world.move_player(player_id, -1, 0);
-                                messages.push(CombatMessage { texte: "Vous prenez la fuite !".to_string(), duree: 1.2 });
+                                messages.push(CombatMessage {
+                                    texte: "Vous prenez la fuite !".to_string(),
+                                    duree: 1.2,
+                                });
                                 return CombatResolution {
                                     messages,
                                     transition: CombatTransition::Terminer(CombatResult::Fuite),
                                 };
                             } else {
                                 self.player_turn = false;
-                                messages.push(CombatMessage { texte: "Vous n'arrivez pas à fuir...".to_string(), duree: 1.0 });
+                                messages.push(CombatMessage {
+                                    texte: "Vous n'arrivez pas à fuir...".to_string(),
+                                    duree: 1.0,
+                                });
                             }
                         }
                     }
@@ -144,7 +160,10 @@ impl CombatState {
                 CombatResult::DoubleKo => "Les deux combattants tombent en même temps.".to_string(),
                 CombatResult::Fuite => unreachable!(),
             };
-            messages.push(CombatMessage { texte: texte.clone(), duree: 2.0 });
+            messages.push(CombatMessage {
+                texte: texte.clone(),
+                duree: 2.0,
+            });
             return CombatResolution {
                 messages,
                 transition: CombatTransition::Terminer(result),
@@ -159,7 +178,10 @@ impl CombatState {
             }
             self.player_defending = false;
             self.player_turn = true;
-            messages.push(CombatMessage { texte: format!("L'ennemi inflige {} dégâts", damage), duree: 1.0 });
+            messages.push(CombatMessage {
+                texte: format!("L'ennemi inflige {} dégâts", damage),
+                duree: 1.0,
+            });
         }
 
         // Vérifier après l'attaque de l'ennemi
@@ -178,7 +200,10 @@ impl CombatState {
                 CombatResult::DoubleKo => "Les deux combattants tombent en même temps.".to_string(),
                 CombatResult::Fuite => unreachable!(),
             };
-            messages.push(CombatMessage { texte: texte.clone(), duree: 2.0 });
+            messages.push(CombatMessage {
+                texte: texte.clone(),
+                duree: 2.0,
+            });
             return CombatResolution {
                 messages,
                 transition: CombatTransition::Terminer(result),
@@ -246,4 +271,3 @@ impl CombatState {
         };
     }
 }
-
