@@ -120,6 +120,16 @@ pub struct Game {
     textures: GameTextures,
     map_tiles: Vec<Vec<TileType>>,
     player_anim: PlayerAnim,
+    /// Indique si le joueur est en train de glisser d'une case à l'autre.
+    moving: bool,
+    /// Temps total en secondes pour parcourir une case lors du déplacement.
+    move_time: f32,
+    /// Progrès du déplacement courant (entre 0.0 et 1.0).
+    move_progress: f32,
+    /// Coordonnées de départ du déplacement en cours.
+    move_from: Position,
+    /// Coordonnées d'arrivée du déplacement en cours.
+    move_to: Position,
 }
 
 enum GameState {
@@ -217,6 +227,17 @@ impl Game {
             textures,
             map_tiles,
             player_anim: PlayerAnim::new(),
+            moving: false,
+            move_time: 0.2,
+            move_progress: 0.0,
+            move_from: Position {
+                x: PLAYER_START_X,
+                y: PLAYER_START_Y,
+            },
+            move_to: Position {
+                x: PLAYER_START_X,
+                y: PLAYER_START_Y,
+            },
         }
     }
 
@@ -224,12 +245,27 @@ impl Game {
         clear_background(LIGHTGRAY);
         let dt = get_frame_time();
         self.update_messages(dt);
+        // D'abord mettre à jour l'avancement du déplacement en cours avant toute logique de jeu.
         if matches!(self.state, GameState::Exploration) {
+            self.update_movement(dt);
             self.update_exploration(dt);
         } else {
             self.update_combat_state();
         }
         self.render();
+    }
+
+    /// Met à jour l'animation de déplacement. Lorsque `moving` est vrai, on
+    /// incrémente `move_progress` en fonction du temps écoulé et on termine le
+    /// mouvement lorsque la valeur dépasse 1.0.
+    fn update_movement(&mut self, dt: f32) {
+        if self.moving {
+            self.move_progress += dt / self.move_time;
+            if self.move_progress >= 1.0 {
+                self.moving = false;
+                self.move_progress = 0.0;
+            }
+        }
     }
 
     fn update_messages(&mut self, dt: f32) {
@@ -244,7 +280,15 @@ impl Game {
     }
 
     fn update_exploration(&mut self, dt: f32) {
-        // Déplacement sur la grille : on déplace le joueur d'une case par pression de touche,
+        // Si le joueur est en train de glisser d'une case à l'autre, on met simplement
+        // à jour l'animation et on retourne sans tenter de lancer un nouveau déplacement.
+        if self.moving {
+            // Mettre à jour l'animation pendant la glisse.
+            self.player_anim.update(dt, true);
+            return;
+        }
+
+        // Déplacement sur la grille : on déplace le joueur d'une case par pression de touche,
         // mais l'animation doit continuer tant que la touche reste enfoncée. On sépare donc
         // la détection du mouvement (pour déplacer) et la détection de l'appui continu (pour animer).
         let mut dx: isize = 0;
@@ -265,7 +309,7 @@ impl Game {
         }
 
         // Déterminer si une touche directionnelle est maintenue enfoncée pour animer
-        let moving = is_key_down(KeyCode::Up)
+        let moving_input = is_key_down(KeyCode::Up)
             || is_key_down(KeyCode::Z)
             || is_key_down(KeyCode::Down)
             || is_key_down(KeyCode::S)
@@ -274,7 +318,7 @@ impl Game {
             || is_key_down(KeyCode::Right)
             || is_key_down(KeyCode::D);
 
-        if moving {
+        if moving_input {
             // Choisir la direction en fonction des touches maintenues. L'ordre de
             // priorité est donné par la superposition verticale puis horizontale :
             // les déplacements horizontaux écrasent les déplacements verticaux.
@@ -290,30 +334,56 @@ impl Game {
             }
         }
         // Mettre à jour l'animation du joueur en fonction du temps écoulé et de l'appui
-        self.player_anim.update(dt, moving);
+        self.player_anim.update(dt, moving_input);
 
         let mut world = self.world.lock().unwrap();
         // Déplacer le joueur d'une case lorsque l'on détecte une pression de touche
         if dx != 0 || dy != 0 {
+            // Mémoriser la position avant déplacement
+            let old_pos = world.players()[0].position();
             let moved = world.move_player(0, dx, dy);
             if moved {
+                // Mémoriser la position après déplacement
+                let new_pos = world.players()[0].position();
+                // Initialiser l'interpolation de déplacement
+                self.moving = true;
+                self.move_progress = 0.0;
+                self.move_from = Position {
+                    x: old_pos.x,
+                    y: old_pos.y,
+                };
+                self.move_to = Position {
+                    x: new_pos.x,
+                    y: new_pos.y,
+                };
+                // Mettre à jour la direction en fonction du déplacement
+                if dy < 0 {
+                    self.player_anim.direction = Direction::Up;
+                } else if dy > 0 {
+                    self.player_anim.direction = Direction::Down;
+                }
+                if dx > 0 {
+                    self.player_anim.direction = Direction::Right;
+                } else if dx < 0 {
+                    self.player_anim.direction = Direction::Left;
+                }
                 self.messages.push(Message {
                     texte: String::from("Vous vous déplacez."),
                     timer: 0.6,
                 });
+                // Vérifier immédiatement si un combat doit être lancé
+                if let Some((p_idx, e_idx)) = world.find_adjacent_pair() {
+                    self.messages.push(Message {
+                        texte: String::from("Un ennemi est proche : combat engagé !"),
+                        timer: 1.2,
+                    });
+                    let player_speed = world.players()[p_idx].vitesse();
+                    let enemy_speed = world.enemies()[e_idx].vitesse();
+                    let player_first = player_speed >= enemy_speed;
+                    let combat_state = CombatState::with_initiative(p_idx, e_idx, player_first);
+                    self.state = GameState::Combat(combat_state);
+                }
             }
-        }
-        // Lancer un combat si un joueur et un ennemi sont adjacents
-        if let Some((p_idx, e_idx)) = world.find_adjacent_pair() {
-            self.messages.push(Message {
-                texte: String::from("Un ennemi est proche : combat engagé !"),
-                timer: 1.2,
-            });
-            let player_speed = world.players()[p_idx].vitesse();
-            let enemy_speed = world.enemies()[e_idx].vitesse();
-            let player_first = player_speed >= enemy_speed;
-            let combat_state = CombatState::with_initiative(p_idx, e_idx, player_first);
-            self.state = GameState::Combat(combat_state);
         }
     }
 
@@ -409,9 +479,20 @@ impl Game {
         // Dessiner le joueur
         for p in world.players() {
             if p.est_vivant() {
-                let pos = p.position();
-                let x_f = pos.x as f32 * TILE_SIZE;
-                let y_f = pos.y as f32 * TILE_SIZE;
+                // Déterminer la position affichée. Si un déplacement est en cours, on interpole
+                // entre les coordonnées d'origine et de destination selon move_progress.
+                let (x_f, y_f) = if self.moving {
+                    let from_x = self.move_from.x as f32;
+                    let from_y = self.move_from.y as f32;
+                    let to_x = self.move_to.x as f32;
+                    let to_y = self.move_to.y as f32;
+                    let interp_x = from_x + (to_x - from_x) * self.move_progress;
+                    let interp_y = from_y + (to_y - from_y) * self.move_progress;
+                    (interp_x * TILE_SIZE, interp_y * TILE_SIZE)
+                } else {
+                    let pos = p.position();
+                    (pos.x as f32 * TILE_SIZE, pos.y as f32 * TILE_SIZE)
+                };
                 let index = self.player_anim.current_frame_index();
                 let src = self.textures.char_frames[index];
                 draw_texture_ex(
@@ -422,7 +503,6 @@ impl Game {
                     DrawTextureParams {
                         dest_size: Some(Vec2::new(TILE_SIZE, TILE_SIZE)),
                         source: Some(src),
-                        // Les frames gauche/droite sont distinctes, pas de retournement horizontal.
                         flip_x: false,
                         ..Default::default()
                     },
