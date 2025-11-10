@@ -1,4 +1,5 @@
 use crate::entity::{Combatant, Personnage, Position};
+use rand::thread_rng;
 use std::collections::HashSet;
 
 pub struct World {
@@ -99,6 +100,77 @@ impl World {
             }
         }
 
+        for (i, pos_opt) in new_positions.into_iter().enumerate() {
+            if let Some(pos) = pos_opt {
+                if let Some(enemy) = self.enemies.get_mut(i) {
+                    let enemy_pos = enemy.position_mut();
+                    enemy_pos.x = pos.x;
+                    enemy_pos.y = pos.y;
+                }
+            }
+        }
+    }
+
+    /// Met à jour les ennemis avec un déplacement aléatoire lent basé sur un timer par entité.
+    /// Utilise `dt` (en secondes) comme intervalle écoulé depuis le dernier tick.
+    /// Évite les collisions avec les joueurs et entre ennemis.
+    pub fn wander_enemies(&mut self, dt: f32) {
+        if dt <= 0.0 { return; }
+
+        // Snapshot des positions des joueurs vivants
+        let players_snapshot: Vec<_> = self
+            .players
+            .iter()
+            .filter(|p| p.est_vivant())
+            .map(|p| (p.id(), p.position()))
+            .collect();
+
+        // Occupation initiale
+        let mut occupied = std::collections::HashSet::<(usize, usize)>::new();
+        for (_, pos) in &players_snapshot { occupied.insert((pos.x, pos.y)); }
+        for e in &self.enemies {
+            if e.est_vivant() {
+                let pos = e.position();
+                occupied.insert((pos.x, pos.y));
+            }
+        }
+
+    let mut rng = thread_rng();
+    let w = self.width as isize;
+    let h = self.height as isize;
+        let mut new_positions: Vec<Option<Position>> = vec![None; self.enemies.len()];
+
+        for (i, enemy) in self.enemies.iter_mut().enumerate() {
+            if !enemy.est_vivant() { continue; }
+
+            // Combien de pas sont dus avec ce dt ? On ne tente qu'un pas par tick.
+            let steps = enemy.steps_due(dt);
+            if steps == 0 { continue; }
+
+            let current = enemy.position();
+            // Essayer jusqu'à 4 directions aléatoires pour trouver une case libre
+            let mut moved_to: Option<(usize, usize)> = None;
+            for _ in 0..4 {
+                let (dx, dy) = enemy.random_dir(&mut rng);
+                let nx = current.x as isize + dx;
+                let ny = current.y as isize + dy;
+                if nx >= 0 && ny >= 0 && nx < w && ny < h {
+                    let (nxu, nyu) = (nx as usize, ny as usize);
+                    if !occupied.contains(&(nxu, nyu)) {
+                        moved_to = Some((nxu, nyu));
+                        break;
+                    }
+                }
+            }
+
+            if let Some((nxu, nyu)) = moved_to {
+                occupied.remove(&(current.x, current.y));
+                occupied.insert((nxu, nyu));
+                new_positions[i] = Some(Position { x: nxu, y: nyu });
+            }
+        }
+
+        // Appliquer les nouvelles positions
         for (i, pos_opt) in new_positions.into_iter().enumerate() {
             if let Some(pos) = pos_opt {
                 if let Some(enemy) = self.enemies.get_mut(i) {

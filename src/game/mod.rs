@@ -36,12 +36,15 @@ impl Game {
         let world = Arc::new(Mutex::new(world));
         let thread_world = Arc::clone(&world);
         thread::spawn(move || {
+            // Tick fixe pour le déplacement autonome aléatoire
+            let tick_ms = 400u64;
+            let dt = (tick_ms as f32) / 1000.0;
             loop {
                 {
                     let mut world = thread_world.lock().unwrap();
-                    world.step_enemies();
+                    world.wander_enemies(dt);
                 }
-                thread::sleep(Duration::from_millis(400));
+                thread::sleep(Duration::from_millis(tick_ms));
             }
         });
 

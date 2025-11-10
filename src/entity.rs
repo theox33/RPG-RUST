@@ -25,9 +25,10 @@ pub struct Position {
     pub y: usize,
 }
 
-/// Vitesse de déplacement des entités en cellules par seconde.
-/// Réduisez cette constante pour rendre les entités plus lentes.
-pub const ENTITY_SPEED: f32 = 0.5; // 0.5 cellule par seconde (lent)
+/// Vitesse de base (pas par seconde) pour une entité de vitesse 10.
+/// Multipliez par `stats.vitesse as f32 / 10.0` pour obtenir la vitesse effective.
+/// Réduisez cette constante pour rendre toutes les entités plus lentes.
+pub const ENTITY_SPEED: f32 = 0.5; // 0.5 pas/seconde à vitesse 10 (lent)
 
 #[derive(Clone, Debug)]
 pub struct Stats {
@@ -89,6 +90,8 @@ pub struct Personnage {
     faction: Faction,
     stats: Stats,
     pos: Position,
+    /// Accumulateur de pas pour le déplacement (timer/cooldown continu)
+    move_accum: f32,
 }
 
 impl Personnage {
@@ -98,7 +101,7 @@ impl Personnage {
             Classe::Magicien => Stats::new(80, 25, 12),
             Classe::Assassin => Stats::new(90, 18, 20),
         };
-        Self { id, classe, faction: Faction::Joueur, stats, pos }
+        Self { id, classe, faction: Faction::Joueur, stats, pos, move_accum: 0.0 }
     }
 
     pub fn nouvel_ennemi(id: usize, classe: Classe, pos: Position) -> Self {
@@ -107,7 +110,33 @@ impl Personnage {
             Classe::Magicien => Stats::new(60, 20, 10),
             Classe::Assassin => Stats::new(70, 14, 15),
         };
-        Self { id, classe, faction: Faction::Ennemi, stats, pos }
+        Self { id, classe, faction: Faction::Ennemi, stats, pos, move_accum: 0.0 }
+    }
+
+    /// Vitesse effective en pas par seconde, tenant compte des stats.
+    pub fn effective_speed(&self) -> f32 {
+        let mult = (self.stats.vitesse as f32) / 10.0;
+        ENTITY_SPEED * mult
+    }
+
+    /// Ajoute dt au timer et retourne le nombre de pas à exécuter (entier),
+    /// en conservant la fraction restante dans l'accumulateur.
+    pub fn steps_due(&mut self, dt: f32) -> usize {
+        if dt <= 0.0 { return 0; }
+        self.move_accum += self.effective_speed() * dt;
+        let steps = self.move_accum.floor() as usize;
+        self.move_accum -= steps as f32;
+        steps
+    }
+
+    /// Retourne une direction aléatoire cardinale (dx, dy) où |dx|+|dy| = 1.
+    pub fn random_dir<R: Rng>(&self, rng: &mut R) -> (isize, isize) {
+        match rng.gen_range(0..4) {
+            0 => (0, -1),
+            1 => (0, 1),
+            2 => (-1, 0),
+            _ => (1, 0),
+        }
     }
 
     /// Déplace l'entité de manière aléatoire en fonction de la vitesse `ENTITY_SPEED`.
