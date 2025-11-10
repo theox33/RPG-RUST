@@ -43,6 +43,8 @@ pub struct GameTextures {
     pub chemin_src: Rect,
     pub char_texture: Texture2D,
     pub char_frames: Vec<Rect>,
+    /// Différentes variantes d'herbe découpées dans la feuille de texture.
+    pub grass_variants: Vec<Rect>,
 }
 
 /// Directions possibles du personnage. Chaque direction dispose d'un nombre
@@ -128,6 +130,8 @@ pub struct Game {
     move_from: Position,
     /// Coordonnées d'arrivée du déplacement en cours.
     move_to: Position,
+    /// Pour chaque tuile d'herbe, index de la variante à utiliser.
+    grass_choice: Vec<Vec<usize>>,
 }
 
 enum GameState {
@@ -169,6 +173,16 @@ impl Game {
         let herbe_src = Rect::new(20.0, 20.0, 100.0, 100.0);
         let chemin_src = Rect::new(300.0, 20.0, 100.0, 100.0);
 
+        // Définir les variantes d'herbe (5 variantes) découpées manuellement dans la
+        // feuille de texture. Ces coordonnées doivent être ajustées selon votre spritesheet.
+        let grass_variants = vec![
+            Rect::new(20.0, 20.0, 100.0, 100.0),
+            Rect::new(170.0, 20.0, 100.0, 100.0),
+            Rect::new(20.0, 170.0, 100.0, 100.0),
+            Rect::new(450.0, 170.0, 100.0, 100.0),
+            Rect::new(450.0, 320.0, 100.0, 100.0),
+        ];
+
         // Créer la liste de frames pour l'animation du personnage (3 colonnes × 4 lignes).
         // Les frames sont décalées de quelques pixels vers le bas (offset_y) pour éviter
         // d'inclure des pixels de la ligne supérieure.
@@ -202,6 +216,7 @@ impl Game {
             chemin_src,
             char_texture,
             char_frames,
+            grass_variants,
         };
 
         // Partager le monde entre le thread principal et le thread secondaire
@@ -218,6 +233,22 @@ impl Game {
                 thread::sleep(Duration::from_millis(tick_ms));
             }
         });
+
+        // Tirer une variante aléatoire pour chaque tuile d'herbe
+        let mut rng = thread_rng();
+        let grass_choice = (0..MAP_HEIGHT)
+            .map(|y| {
+                (0..MAP_WIDTH)
+                    .map(|x| {
+                        if map_tiles[y][x] == TileType::Herbe {
+                            rng.gen_range(0..textures.grass_variants.len())
+                        } else {
+                            0usize
+                        }
+                    })
+                    .collect::<Vec<usize>>()
+            })
+            .collect::<Vec<Vec<usize>>>();
 
         Self {
             world,
@@ -238,6 +269,7 @@ impl Game {
                 x: PLAYER_START_X,
                 y: PLAYER_START_Y,
             },
+            grass_choice,
         }
     }
 
@@ -432,6 +464,9 @@ impl Game {
                 let y_f = y as f32 * TILE_SIZE;
                 match self.map_tiles[y][x] {
                     TileType::Herbe => {
+                        // Choisir la variante d'herbe pour cette case
+                        let variant_index = self.grass_choice[y][x];
+                        let src = self.textures.grass_variants[variant_index];
                         draw_texture_ex(
                             &self.textures.map_texture,
                             x_f,
@@ -439,7 +474,7 @@ impl Game {
                             WHITE,
                             DrawTextureParams {
                                 dest_size: Some(Vec2::new(TILE_SIZE, TILE_SIZE)),
-                                source: Some(self.textures.herbe_src),
+                                source: Some(src),
                                 ..Default::default()
                             },
                         );
