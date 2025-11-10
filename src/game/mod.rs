@@ -228,7 +228,8 @@ impl Game {
             map_tiles,
             player_anim: PlayerAnim::new(),
             moving: false,
-            move_time: 0.2,
+            // Durée d'une glissade entre deux cases (en secondes). Augmentée pour que l'animation soit plus visible.
+            move_time: 0.3,
             move_progress: 0.0,
             move_from: Position {
                 x: PLAYER_START_X,
@@ -294,29 +295,21 @@ impl Game {
         let mut dx: isize = 0;
         let mut dy: isize = 0;
 
-        // Détecter une pression de touche pour déplacer d'une case (QWERTY et AZERTY)
-        if is_key_pressed(KeyCode::Up) || is_key_pressed(KeyCode::Z) {
+        // Déterminer le déplacement souhaité en fonction des touches enfoncées (QWERTY et AZERTY).
+        // On utilise `is_key_down` afin de permettre la répétition du mouvement quand la touche est maintenue.
+        if is_key_down(KeyCode::Up) || is_key_down(KeyCode::Z) {
             dy = -1;
-        }
-        if is_key_pressed(KeyCode::Down) || is_key_pressed(KeyCode::S) {
+        } else if is_key_down(KeyCode::Down) || is_key_down(KeyCode::S) {
             dy = 1;
         }
-        if is_key_pressed(KeyCode::Left) || is_key_pressed(KeyCode::Q) {
+        if is_key_down(KeyCode::Right) || is_key_down(KeyCode::D) {
+            dx = 1;
+        } else if is_key_down(KeyCode::Left) || is_key_down(KeyCode::Q) {
             dx = -1;
         }
-        if is_key_pressed(KeyCode::Right) || is_key_pressed(KeyCode::D) {
-            dx = 1;
-        }
 
-        // Déterminer si une touche directionnelle est maintenue enfoncée pour animer
-        let moving_input = is_key_down(KeyCode::Up)
-            || is_key_down(KeyCode::Z)
-            || is_key_down(KeyCode::Down)
-            || is_key_down(KeyCode::S)
-            || is_key_down(KeyCode::Left)
-            || is_key_down(KeyCode::Q)
-            || is_key_down(KeyCode::Right)
-            || is_key_down(KeyCode::D);
+        // Le personnage est en mouvement si au moins une touche directionnelle est enfoncée.
+        let moving_input = dx != 0 || dy != 0;
 
         if moving_input {
             // Choisir la direction en fonction des touches maintenues. L'ordre de
@@ -356,17 +349,14 @@ impl Game {
                     x: new_pos.x,
                     y: new_pos.y,
                 };
-                // Mettre à jour la direction en fonction du déplacement
-                if dy < 0 {
-                    self.player_anim.direction = Direction::Up;
-                } else if dy > 0 {
-                    self.player_anim.direction = Direction::Down;
-                }
-                if dx > 0 {
-                    self.player_anim.direction = Direction::Right;
-                } else if dx < 0 {
-                    self.player_anim.direction = Direction::Left;
-                }
+                // Adapter la durée d'une frame en fonction du nombre de frames pour cette direction
+                let nframes = match self.player_anim.direction {
+                    Direction::Down => 1,
+                    Direction::Right => 2,
+                    Direction::Left => 3,
+                    Direction::Up => 3,
+                };
+                self.player_anim.frame_duration = self.move_time / nframes as f32;
                 self.messages.push(Message {
                     texte: String::from("Vous vous déplacez."),
                     timer: 0.6,
