@@ -28,8 +28,12 @@ pub const MAX_ENEMIES: usize = 4;
 /// reliant le point de départ aux bords de la carte.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum TileType {
+    /// Sol standard permettant au joueur et aux ennemis de se déplacer.
     Herbe,
+    /// Chemin reliant la position initiale aux bords de la carte.
     Chemin,
+    /// Eau représentant une rivière. Les personnages ne peuvent pas s'y déplacer.
+    Eau,
 }
 
 /// Regroupe toutes les textures nécessaires au rendu et leurs rectangles de
@@ -48,6 +52,8 @@ pub struct GameTextures {
     pub grass_variants: Vec<Rect>,
     pub enemy_texture: Texture2D,
     pub enemy_frames: Vec<Rect>,
+    /// Rectangle source pour la texture de l'eau dans la carte.
+    pub water_src: Rect,
 }
 
 /// Directions possibles du personnage. Chaque direction dispose d'un nombre
@@ -155,7 +161,22 @@ impl Game {
     /// de texture séparée pour leur animation.
     pub fn new(map_texture: Texture2D, char_texture: Texture2D, enemy_texture: Texture2D) -> Self {
         // Générer la grille de la carte
-        let map_tiles = generate_map_tiles(MAP_WIDTH, MAP_HEIGHT, PLAYER_START_X, PLAYER_START_Y);
+        let mut map_tiles = generate_map_tiles(MAP_WIDTH, MAP_HEIGHT, PLAYER_START_X, PLAYER_START_Y);
+        // Insérer une rivière en bas à gauche : un segment horizontal partant du bord gauche
+        // et un segment vertical descendant vers le bas. Ces cases sont marquées comme Eau.
+        // Segment horizontal (sur la ligne avant-dernière, colonnes 0 à 2)
+        let river_row = MAP_HEIGHT.saturating_sub(2);
+        for x in 0..3.min(MAP_WIDTH) {
+            if river_row < MAP_HEIGHT && x < MAP_WIDTH {
+                map_tiles[river_row][x] = TileType::Eau;
+            }
+        }
+        // Segment vertical (sur la première colonne, des deux dernières lignes)
+        for y in river_row..MAP_HEIGHT {
+            if y < MAP_HEIGHT {
+                map_tiles[y][0] = TileType::Eau;
+            }
+        }
         // Initialiser le monde et ajouter le joueur
         let mut world = World::new(MAP_WIDTH, MAP_HEIGHT);
         world.add_player(Personnage::nouveau_joueur(
@@ -166,11 +187,13 @@ impl Game {
                 y: PLAYER_START_Y,
             },
         ));
-        // Générer des ennemis sur les cases d'herbe
+        // Générer des ennemis sur les cases d'herbe (après génération de la rivière)
         spawn_random_enemies(&mut world, &map_tiles, MAX_ENEMIES);
-        // Définir les rectangles sources pour l'herbe et le chemin
+        // Définir les rectangles sources pour l'herbe, le chemin et l'eau
         let herbe_src = Rect::new(20.0, 20.0, 100.0, 100.0);
         let chemin_src = Rect::new(300.0, 20.0, 100.0, 100.0);
+        // L'eau est extraite de la feuille de carte à partir de la deuxième ligne (bleue).
+        let water_src = Rect::new(170.0, 170.0, 100.0, 100.0);
         // Variantes d'herbe (5 variantes)
         let grass_variants = vec![
             Rect::new(20.0, 20.0, 100.0, 100.0),
@@ -220,6 +243,7 @@ impl Game {
             grass_variants,
             enemy_texture,
             enemy_frames,
+            water_src,
         };
         // Capturer les positions initiales des ennemis avant de placer le monde dans un Arc
         let initial_enemy_positions: Vec<Position> = world
@@ -351,14 +375,31 @@ impl Game {
                 }
             } else {
                 if pos.x != prev.x || pos.y != prev.y {
-                    anim.moving = true;
-                    anim.from = prev;
-                    anim.to = pos;
-                    anim.progress = 0.0;
-                    anim.frame = 0;
-                    anim.timer = 0.0;
-                    anim.frame_duration = self.move_time / 6.0;
-                    self.enemy_prev_positions[i] = pos;
+                    // Vérifier si la nouvelle case n'est pas de l'eau. Si c'est de l'eau,
+                    // annuler le déplacement en restaurant l'ancienne position de l'ennemi.
+                    let ny = pos.y;
+                    let nx = pos.x;
+                    if nx < MAP_WIDTH && ny < MAP_HEIGHT && self.map_tiles[ny][nx] == TileType::Eau {
+                        // Revenir à la position précédente dans le monde
+                        if let Ok(mut w) = self.world.lock() {
+                            if let Some(enemy) = w.enemies.get_mut(i) {
+                                let mut epos = enemy.position_mut();
+                                epos.x = prev.x;
+                                epos.y = prev.y;
+                            }
+                        }
+                        // Mettre à jour la position courante et ne pas déclencher d'animation
+                        self.enemy_prev_positions[i] = prev;
+                    } else {
+                        anim.moving = true;
+                        anim.from = prev;
+                        anim.to = pos;
+                        anim.progress = 0.0;
+                        anim.frame = 0;
+                        anim.timer = 0.0;
+                        anim.frame_duration = self.move_time / 6.0;
+                        self.enemy_prev_positions[i] = pos;
+                    }
                 }
             }
         }
@@ -408,8 +449,19 @@ impl Game {
         self.player_anim.update(dt, moving_input);
         let mut world = self.world.lock().unwrap();
         if dx != 0 || dy != 0 {
+            // Vérifier si la case cible n'est pas de l'eau avant de déplacer le joueur
             let old_pos = world.players()[0].position();
-            let moved = world.move_player(0, dx, dy);
+            let nx = old_pos.x as isize + dx;
+            let ny = old_pos.y as isize + dy;
+            let mut moved = false;
+            if nx >= 0 && ny >= 0 {
+                let (nxu, nyu) = (nx as usize, ny as usize);
+                if nxu < MAP_WIDTH && nyu < MAP_HEIGHT {
+                    if self.map_tiles[nyu][nxu] != TileType::Eau {
+                        moved = world.move_player(0, dx, dy);
+                    }
+                }
+            }
             if moved {
                 let new_pos = world.players()[0].position();
                 self.moving = true;
@@ -520,6 +572,19 @@ impl Game {
                             DrawTextureParams {
                                 dest_size: Some(Vec2::new(TILE_SIZE, TILE_SIZE)),
                                 source: Some(self.textures.chemin_src),
+                                ..Default::default()
+                            },
+                        );
+                    }
+                    TileType::Eau => {
+                        draw_texture_ex(
+                            &self.textures.map_texture,
+                            x_f,
+                            y_f,
+                            WHITE,
+                            DrawTextureParams {
+                                dest_size: Some(Vec2::new(TILE_SIZE, TILE_SIZE)),
+                                source: Some(self.textures.water_src),
                                 ..Default::default()
                             },
                         );
