@@ -1,5 +1,5 @@
 use crate::entity::{Combatant, Personnage, Position};
-use rand::thread_rng;
+use ::rand::thread_rng;
 use std::collections::HashSet;
 
 pub struct World {
@@ -135,9 +135,9 @@ impl World {
             }
         }
 
-    let mut rng = thread_rng();
-    let w = self.width as isize;
-    let h = self.height as isize;
+        let mut rng = thread_rng();
+        let w = self.width as isize;
+        let h = self.height as isize;
         let mut new_positions: Vec<Option<Position>> = vec![None; self.enemies.len()];
 
         for (i, enemy) in self.enemies.iter_mut().enumerate() {
