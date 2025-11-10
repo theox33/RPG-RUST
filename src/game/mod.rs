@@ -244,9 +244,13 @@ impl Game {
     }
 
     fn update_exploration(&mut self, dt: f32) {
+        // Déplacement sur la grille : on déplace le joueur d'une case par pression de touche,
+        // mais l'animation doit continuer tant que la touche reste enfoncée. On sépare donc
+        // la détection du mouvement (pour déplacer) et la détection de l'appui continu (pour animer).
         let mut dx: isize = 0;
         let mut dy: isize = 0;
-        // Détecter les touches directionnelles (supporte AZERTY et QWERTY)
+
+        // Détecter une pression de touche pour déplacer d'une case (QWERTY et AZERTY)
         if is_key_pressed(KeyCode::Up) || is_key_pressed(KeyCode::Z) {
             dy = -1;
         }
@@ -260,26 +264,37 @@ impl Game {
             dx = 1;
         }
 
-        let moving = dx != 0 || dy != 0;
+        // Déterminer si une touche directionnelle est maintenue enfoncée pour animer
+        let moving = is_key_down(KeyCode::Up)
+            || is_key_down(KeyCode::Z)
+            || is_key_down(KeyCode::Down)
+            || is_key_down(KeyCode::S)
+            || is_key_down(KeyCode::Left)
+            || is_key_down(KeyCode::Q)
+            || is_key_down(KeyCode::Right)
+            || is_key_down(KeyCode::D);
+
         if moving {
-            // Déterminer la direction en fonction du déplacement. L'ordre des tests
-            // correspond à la priorité : les déplacements horizontaux écrasent les déplacements verticaux.
-            if dy < 0 {
+            // Choisir la direction en fonction des touches maintenues. L'ordre de
+            // priorité est donné par la superposition verticale puis horizontale :
+            // les déplacements horizontaux écrasent les déplacements verticaux.
+            if is_key_down(KeyCode::Up) || is_key_down(KeyCode::Z) {
                 self.player_anim.direction = Direction::Up;
-            } else if dy > 0 {
+            } else if is_key_down(KeyCode::Down) || is_key_down(KeyCode::S) {
                 self.player_anim.direction = Direction::Down;
             }
-            if dx > 0 {
+            if is_key_down(KeyCode::Right) || is_key_down(KeyCode::D) {
                 self.player_anim.direction = Direction::Right;
-            } else if dx < 0 {
+            } else if is_key_down(KeyCode::Left) || is_key_down(KeyCode::Q) {
                 self.player_anim.direction = Direction::Left;
             }
         }
-        // Mettre à jour l'animation du joueur
+        // Mettre à jour l'animation du joueur en fonction du temps écoulé et de l'appui
         self.player_anim.update(dt, moving);
 
         let mut world = self.world.lock().unwrap();
-        if moving {
+        // Déplacer le joueur d'une case lorsque l'on détecte une pression de touche
+        if dx != 0 || dy != 0 {
             let moved = world.move_player(0, dx, dy);
             if moved {
                 self.messages.push(Message {
