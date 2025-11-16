@@ -9,15 +9,27 @@ pub struct World {
     pub height: usize,
     pub players: Vec<Joueur>,
     pub enemies: Vec<Ennemi>,
+    pub enemies_frozen: bool, // True si les ennemis sont figés (combat)
 }
 
 impl World {
+        /// Retourne l'indice d'un ennemi vivant sur la case (x, y), ou None
+        pub fn find_enemy_on_tile(&self, x: usize, y: usize) -> Option<usize> {
+            self.enemies.iter().enumerate().find_map(|(ei, e)| {
+                if e.est_vivant() && e.position().x == x && e.position().y == y {
+                    Some(ei)
+                } else {
+                    None
+                }
+            })
+        }
     pub fn new(width: usize, height: usize) -> Self {
         World {
             width,
             height,
             players: Vec::new(),
             enemies: Vec::new(),
+            enemies_frozen: false,
         }
     }
 
@@ -79,7 +91,7 @@ impl World {
     /// Utilise `dt` (en secondes) comme intervalle écoulé depuis le dernier tick.
     /// Évite les collisions avec les joueurs et entre ennemis.
     pub fn wander_enemies(&mut self, dt: f32) {
-        if dt <= 0.0 {
+        if dt <= 0.0 || self.enemies_frozen {
             return;
         }
 
@@ -152,26 +164,6 @@ impl World {
         }
     }
 
-    pub fn find_adjacent_pair(&self) -> Option<(usize, usize)> {
-        for (pi, p) in self.players.iter().enumerate() {
-            if !p.est_vivant() {
-                continue;
-            }
-            for (ei, e) in self.enemies.iter().enumerate() {
-                if !e.est_vivant() {
-                    continue;
-                }
-                let p_pos = p.position();
-                let e_pos = e.position();
-                let dist = (p_pos.x as isize - e_pos.x as isize).abs()
-                    + (p_pos.y as isize - e_pos.y as isize).abs();
-                if dist == 1 {
-                    return Some((pi, ei));
-                }
-            }
-        }
-        None
-    }
 
     pub fn players(&self) -> &[Joueur] {
         &self.players

@@ -447,43 +447,45 @@ impl Game {
         self.player_anim.update(dt, moving_input);
         let mut world = self.world.lock().unwrap();
         if dx != 0 || dy != 0 {
-            // Vérifier si la case cible n'est pas de l'eau avant de déplacer le joueur
             let old_pos = world.players()[0].position();
             let nx = old_pos.x as isize + dx;
             let ny = old_pos.y as isize + dy;
-            let mut moved = false;
             if nx >= 0 && ny >= 0 {
                 let (nxu, nyu) = (nx as usize, ny as usize);
                 if nxu < MAP_WIDTH && nyu < MAP_HEIGHT {
                     if self.map_tiles[nyu][nxu] != TileType::Eau {
-                        moved = world.move_player(0, dx, dy);
+                        // Vérifier si un ennemi est sur la case cible
+                        if let Some(e_idx) = world.find_enemy_on_tile(nxu, nyu) {
+                            self.messages.push(Message {
+                                texte: String::from("Vous tentez d'entrer sur la case d'un ennemi : combat engagé !"),
+                                timer: 1.2,
+                            });
+                            world.enemies_frozen = true;
+                            let player_speed = world.players()[0].vitesse();
+                            let enemy_speed = world.enemies()[e_idx].vitesse();
+                            let player_first = player_speed >= enemy_speed;
+                            let combat_state = CombatState::with_initiative(0, e_idx, player_first);
+                            self.state = GameState::Combat(combat_state);
+                        } else {
+                            // Déplacement normal
+                            let moved = world.move_player(0, dx, dy);
+                            if moved {
+                                let new_pos = world.players()[0].position();
+                                self.moving = true;
+                                self.move_progress = 0.0;
+                                self.move_from = Position { x: old_pos.x, y: old_pos.y };
+                                self.move_to = Position { x: new_pos.x, y: new_pos.y };
+                                self.player_anim.frame = 0;
+                                self.player_anim.timer = 0.0;
+                                let nframes = 3;
+                                self.player_anim.frame_duration = self.move_time / nframes as f32;
+                                self.messages.push(Message {
+                                    texte: String::from("Vous vous déplacez."),
+                                    timer: 0.6,
+                                });
+                            }
+                        }
                     }
-                }
-            }
-            if moved {
-                let new_pos = world.players()[0].position();
-                self.moving = true;
-                self.move_progress = 0.0;
-                self.move_from = Position { x: old_pos.x, y: old_pos.y };
-                self.move_to = Position { x: new_pos.x, y: new_pos.y };
-                self.player_anim.frame = 0;
-                self.player_anim.timer = 0.0;
-                let nframes = 3;
-                self.player_anim.frame_duration = self.move_time / nframes as f32;
-                self.messages.push(Message {
-                    texte: String::from("Vous vous déplacez."),
-                    timer: 0.6,
-                });
-                if let Some((p_idx, e_idx)) = world.find_adjacent_pair() {
-                    self.messages.push(Message {
-                        texte: String::from("Un ennemi est proche : combat engagé !"),
-                        timer: 1.2,
-                    });
-                    let player_speed = world.players()[p_idx].vitesse();
-                    let enemy_speed = world.enemies()[e_idx].vitesse();
-                    let player_first = player_speed >= enemy_speed;
-                    let combat_state = CombatState::with_initiative(p_idx, e_idx, player_first);
-                    self.state = GameState::Combat(combat_state);
                 }
             }
         }
@@ -538,6 +540,10 @@ impl Game {
             if still_fighting {
                 self.state = GameState::Combat(state);
             } else {
+                // Combat terminé, retour à l'exploration
+                if let Ok(mut world) = self.world.lock() {
+                    world.enemies_frozen = false;
+                }
                 self.state = GameState::Exploration;
             }
         } else {

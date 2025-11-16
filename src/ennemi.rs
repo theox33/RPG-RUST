@@ -1,4 +1,4 @@
-use crate::types::{Combatant, Position, Stats, ENEMY_BASE_STATS, ENTITY_SPEED};
+use crate::types::{Combatant, Position, Stats, ENEMY_BASE_STATS};
 use rand::Rng;
 
 #[derive(Clone, Debug)]
@@ -6,7 +6,6 @@ pub struct Ennemi {
     id: usize,
     stats: Stats,
     pos: Position,
-    move_accum: f32,
     move_timer: f32,
     move_delay: f32,
 }
@@ -20,7 +19,6 @@ impl Ennemi {
             id,
             stats: ENEMY_BASE_STATS,
             pos,
-            move_accum: 0.0,
             move_timer: 0.0,
             move_delay: delay,
         }
@@ -40,20 +38,6 @@ impl Ennemi {
         }
     }
 
-    pub fn effective_speed(&self) -> f32 {
-        let mult = (self.stats.vitesse as f32) / 10.0;
-        ENTITY_SPEED * mult
-    }
-
-    pub fn steps_due(&mut self, dt: f32) -> usize {
-        if dt <= 0.0 {
-            return 0;
-        }
-        self.move_accum += self.effective_speed() * dt;
-        let steps = self.move_accum.floor() as usize;
-        self.move_accum -= steps as f32;
-        steps
-    }
 
     pub fn random_dir<R: Rng>(&self, rng: &mut R) -> (isize, isize) {
         match rng.gen_range(0..4) {

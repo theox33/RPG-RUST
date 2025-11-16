@@ -7,7 +7,7 @@ pub struct Position {
 /// Vitesse de base (pas par seconde) pour une entité de vitesse 10.
 /// Multipliez par `stats.vitesse as f32 / 10.0` pour obtenir la vitesse effective.
 /// Réduisez cette constante pour rendre toutes les entités plus lentes.
-pub const ENTITY_SPEED: f32 = 0.5; // 0.5 pas/seconde à vitesse 10 (lent)
+// pub const ENTITY_SPEED: f32 = 0.5; // 0.5 pas/seconde à vitesse 10 (lent)
 
 #[derive(Clone, Copy, Debug)]
 pub struct Stats {
