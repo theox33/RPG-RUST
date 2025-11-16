@@ -1,4 +1,6 @@
-mod entity;
+mod types;
+mod joueur;
+mod ennemi;
 mod game;
 mod world;
 

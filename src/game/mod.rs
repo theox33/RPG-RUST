@@ -1,8 +1,10 @@
 pub mod combat;
 
-use crate::entity::{Classe, Combatant, Personnage, Position};
+use crate::types::{Combatant, Position};
+use crate::ennemi::Ennemi;
+use crate::joueur::Joueur;
 use crate::world::World;
-use combat::{CombatInput, CombatResolution, CombatState, CombatTransition};
+use combat::{CombatInput, CombatResolution, CombatResult, CombatState, CombatTransition};
 use macroquad::prelude::*;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -38,14 +40,13 @@ pub enum TileType {
 
 /// Regroupe toutes les textures nécessaires au rendu et leurs rectangles de
 /// découpe. La feuille de carte (`map_texture`) est découpée en deux zones :
-/// l'herbe (`herbe_src`) et le chemin (`chemin_src`). La feuille
+/// l'herbe (dans `grass_variants`) et le chemin (`chemin_src`). La feuille
 /// d'animation (`char_texture`) contient 3 colonnes et 4 lignes de frames ;
 /// les rectangles correspondants sont stockés dans `char_frames`. Les ennemis
 /// utilisent une feuille séparée (`enemy_texture`) découpée en 2 colonnes × 3
 /// lignes pour 6 frames.
 pub struct GameTextures {
     pub map_texture: Texture2D,
-    pub herbe_src: Rect,
     pub chemin_src: Rect,
     pub char_texture: Texture2D,
     pub char_frames: Vec<Rect>,
@@ -179,9 +180,8 @@ impl Game {
         }
         // Initialiser le monde et ajouter le joueur
         let mut world = World::new(MAP_WIDTH, MAP_HEIGHT);
-        world.add_player(Personnage::nouveau_joueur(
+        world.add_player(Joueur::nouveau(
             0,
-            Classe::Soldat,
             Position {
                 x: PLAYER_START_X,
                 y: PLAYER_START_Y,
@@ -189,8 +189,7 @@ impl Game {
         ));
         // Générer des ennemis sur les cases d'herbe (après génération de la rivière)
         spawn_random_enemies(&mut world, &map_tiles, MAX_ENEMIES);
-        // Définir les rectangles sources pour l'herbe, le chemin et l'eau
-        let herbe_src = Rect::new(20.0, 20.0, 100.0, 100.0);
+        // Définir les rectangles sources pour le chemin et l'eau
         let chemin_src = Rect::new(300.0, 20.0, 100.0, 100.0);
         // L'eau est extraite de la feuille de carte à partir de la deuxième ligne (bleue).
         let water_src = Rect::new(170.0, 170.0, 100.0, 100.0);
@@ -236,7 +235,6 @@ impl Game {
         // Construire la structure GameTextures
         let textures = GameTextures {
             map_texture,
-            herbe_src,
             chemin_src,
             char_texture,
             char_frames,
@@ -383,7 +381,7 @@ impl Game {
                         // Revenir à la position précédente dans le monde
                         if let Ok(mut w) = self.world.lock() {
                             if let Some(enemy) = w.enemies.get_mut(i) {
-                                let mut epos = enemy.position_mut();
+                                let epos = enemy.position_mut();
                                 epos.x = prev.x;
                                 epos.y = prev.y;
                             }
@@ -514,7 +512,23 @@ impl Game {
                 timer: msg.duree,
             });
         }
-        !matches!(transition, CombatTransition::Terminer(_))
+        match transition {
+            CombatTransition::Continue => true,
+            CombatTransition::Terminer(result) => {
+                self.handle_combat_result(result);
+                false
+            }
+        }
+    }
+
+    fn handle_combat_result(&mut self, result: CombatResult) {
+        let texte = match result {
+            CombatResult::JoueurVainqueur => "Combat gagné : l'ennemi est vaincu.".to_string(),
+            CombatResult::EnnemiVainqueur => "Défaite : le joueur est hors combat.".to_string(),
+            CombatResult::DoubleKo => "Double K.O. : tout le monde tombe !".to_string(),
+            CombatResult::Fuite => "Vous avez fui le combat.".to_string(),
+        };
+        self.messages.push(Message { texte, timer: 1.8 });
     }
 
     fn update_combat_state(&mut self) {
@@ -623,6 +637,7 @@ impl Game {
                         ..Default::default()
                     },
                 );
+
             }
         }
         for (i, e) in world.enemies().iter().enumerate() {
@@ -653,6 +668,7 @@ impl Game {
                         ..Default::default()
                     },
                 );
+
             }
         }
     }
@@ -723,11 +739,7 @@ fn spawn_random_enemies(world: &mut World, tiles: &Vec<Vec<TileType>>, max_enemi
                         pos.x != x || pos.y != y
                     });
             if tile_free {
-                world.add_enemy(Personnage::nouvel_ennemi(
-                    next_id,
-                    Classe::Assassin,
-                    Position { x, y },
-                ));
+                world.add_enemy(Ennemi::nouveau(next_id, Position { x, y }));
                 next_id += 1;
             }
         }

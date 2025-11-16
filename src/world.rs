@@ -1,12 +1,14 @@
-use crate::entity::{Combatant, Personnage, Position};
+use crate::types::{Combatant, Position};
+use crate::ennemi::Ennemi;
+use crate::joueur::Joueur;
 use ::rand::thread_rng;
 use std::collections::HashSet;
 
 pub struct World {
     pub width: usize,
     pub height: usize,
-    pub players: Vec<Personnage>,
-    pub enemies: Vec<Personnage>,
+    pub players: Vec<Joueur>,
+    pub enemies: Vec<Ennemi>,
 }
 
 impl World {
@@ -19,11 +21,11 @@ impl World {
         }
     }
 
-    pub fn add_player(&mut self, p: Personnage) {
+    pub fn add_player(&mut self, p: Joueur) {
         self.players.push(p);
     }
 
-    pub fn add_enemy(&mut self, e: Personnage) {
+    pub fn add_enemy(&mut self, e: Ennemi) {
         self.enemies.push(e);
     }
 
@@ -73,83 +75,6 @@ impl World {
         false
     }
 
-    pub fn step_enemies(&mut self) {
-        let players_snapshot: Vec<_> = self
-            .players
-            .iter()
-            .filter(|p| p.est_vivant())
-            .map(|p| (p.id(), p.position()))
-            .collect();
-
-        let mut occupied: HashSet<(usize, usize)> = HashSet::new();
-        for (_, pos) in &players_snapshot {
-            occupied.insert((pos.x, pos.y));
-        }
-        for e in &self.enemies {
-            if e.est_vivant() {
-                let pos = e.position();
-                occupied.insert((pos.x, pos.y));
-            }
-        }
-
-        let mut new_positions: Vec<Option<Position>> = vec![None; self.enemies.len()];
-
-        for (i, enemy) in self.enemies.iter().enumerate() {
-            if !enemy.est_vivant() {
-                continue;
-            }
-            if let Some((_, target_pos)) = players_snapshot
-                .iter()
-                .min_by_key(|(_, pos)| {
-                    let dx = (pos.x as isize - enemy.position().x as isize).abs();
-                    let dy = (pos.y as isize - enemy.position().y as isize).abs();
-                    (dx + dy) as usize
-                })
-            {
-                let dx = target_pos.x as isize - enemy.position().x as isize;
-                let dy = target_pos.y as isize - enemy.position().y as isize;
-                let step_x = if dx == 0 {
-                    0
-                } else if dx > 0 {
-                    1
-                } else {
-                    -1
-                };
-                let step_y = if dy == 0 {
-                    0
-                } else if dy > 0 {
-                    1
-                } else {
-                    -1
-                };
-
-                let try_moves = [(step_x, 0), (0, step_y)];
-                for (sx, sy) in try_moves.iter() {
-                    let nx = enemy.position().x as isize + sx;
-                    let ny = enemy.position().y as isize + sy;
-                    if self.is_within(nx, ny) {
-                        let (nxu, nyu) = (nx as usize, ny as usize);
-                        if !occupied.contains(&(nxu, nyu)) {
-                            occupied.insert((nxu, nyu));
-                            new_positions[i] = Some(Position { x: nxu, y: nyu });
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        for (i, pos_opt) in new_positions.into_iter().enumerate() {
-            if let Some(pos) = pos_opt {
-                if let Some(enemy) = self.enemies.get_mut(i) {
-                    let enemy_pos = enemy.position_mut();
-                    enemy_pos.x = pos.x;
-                    enemy_pos.y = pos.y;
-                }
-            }
-        }
-    }
-
     /// Met à jour les ennemis avec un déplacement aléatoire lent basé sur un timer par entité.
     /// Utilise `dt` (en secondes) comme intervalle écoulé depuis le dernier tick.
     /// Évite les collisions avec les joueurs et entre ennemis.
@@ -167,7 +92,7 @@ impl World {
             .collect();
 
         // Occupation initiale
-        let mut occupied = std::collections::HashSet::<(usize, usize)>::new();
+        let mut occupied: HashSet<(usize, usize)> = HashSet::new();
         for (_, pos) in &players_snapshot {
             occupied.insert((pos.x, pos.y));
         }
@@ -188,14 +113,12 @@ impl World {
                 continue;
             }
 
-            // Combien de pas sont dus avec ce dt ? On ne tente qu'un pas par tick.
-            let steps = enemy.steps_due(dt);
-            if steps == 0 {
+            // Timer aléatoire : l'ennemi ne bouge que si son timer est écoulé
+            if !enemy.tick_timer(dt) {
                 continue;
             }
 
             let current = enemy.position();
-            // Essayer jusqu'à 4 directions aléatoires pour trouver une case libre
             let mut moved_to: Option<(usize, usize)> = None;
             for _ in 0..4 {
                 let (dx, dy) = enemy.random_dir(&mut rng);
@@ -229,10 +152,6 @@ impl World {
         }
     }
 
-    pub fn any_adjacent(&self) -> bool {
-        self.find_adjacent_pair().is_some()
-    }
-
     pub fn find_adjacent_pair(&self) -> Option<(usize, usize)> {
         for (pi, p) in self.players.iter().enumerate() {
             if !p.est_vivant() {
@@ -254,19 +173,19 @@ impl World {
         None
     }
 
-    pub fn players(&self) -> &[Personnage] {
+    pub fn players(&self) -> &[Joueur] {
         &self.players
     }
 
-    pub fn enemies(&self) -> &[Personnage] {
+    pub fn enemies(&self) -> &[Ennemi] {
         &self.enemies
     }
 
-    pub fn players_mut(&mut self) -> &mut [Personnage] {
+    pub fn players_mut(&mut self) -> &mut [Joueur] {
         &mut self.players
     }
 
-    pub fn enemies_mut(&mut self) -> &mut [Personnage] {
+    pub fn enemies_mut(&mut self) -> &mut [Ennemi] {
         &mut self.enemies
     }
 }

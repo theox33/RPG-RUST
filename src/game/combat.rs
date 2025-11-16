@@ -1,4 +1,4 @@
-use crate::entity::Combatant;
+use crate::types::Combatant;
 use crate::world::World;
 use macroquad::prelude::{KeyCode, Rect, Vec2};
 
