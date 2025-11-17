@@ -23,8 +23,12 @@ async fn main() {
     let enemy_texture = Texture2D::from_file_with_format(enemy_bytes, None);
     enemy_texture.set_filter(FilterMode::Nearest);
 
+    let maison_bytes: &[u8] = include_bytes!("textures/maison.png");
+    let maison_texture = Texture2D::from_file_with_format(maison_bytes, None);
+    maison_texture.set_filter(FilterMode::Nearest);
+
     // Créer le jeu avec toutes les textures chargées
-    let mut game = Game::new(map_texture, char_texture, enemy_texture);
+    let mut game = Game::new(map_texture, char_texture, enemy_texture, maison_texture);
     loop {
         game.frame();
         next_frame().await;

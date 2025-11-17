@@ -10,6 +10,7 @@ pub struct World {
     pub players: Vec<Joueur>,
     pub enemies: Vec<Ennemi>,
     pub enemies_frozen: bool, // True si les ennemis sont figés (combat)
+    walkable: Vec<Vec<bool>>,
 }
 
 impl World {
@@ -30,6 +31,7 @@ impl World {
             players: Vec::new(),
             enemies: Vec::new(),
             enemies_frozen: false,
+            walkable: vec![vec![true; width]; height],
         }
     }
 
@@ -100,6 +102,7 @@ impl World {
         let mut rng = thread_rng();
         let w = self.width as isize;
         let h = self.height as isize;
+        let walkable_map = self.walkable.clone();
         let mut new_positions: Vec<Option<Position>> = vec![None; self.enemies.len()];
 
         for (i, enemy) in self.enemies.iter_mut().enumerate() {
@@ -120,7 +123,13 @@ impl World {
                 let ny = current.y as isize + dy;
                 if nx >= 0 && ny >= 0 && nx < w && ny < h {
                     let (nxu, nyu) = (nx as usize, ny as usize);
-                    if !enemy_occupied.contains(&(nxu, nyu)) {
+                    if walkable_map
+                        .get(nyu)
+                        .and_then(|row| row.get(nxu))
+                        .copied()
+                        .unwrap_or(false)
+                        && !enemy_occupied.contains(&(nxu, nyu))
+                    {
                         moved_to = Some((nxu, nyu));
                         break;
                     }
@@ -160,5 +169,11 @@ impl World {
 
     pub fn enemies_mut(&mut self) -> &mut [Ennemi] {
         &mut self.enemies
+    }
+
+    pub fn update_walkable_map(&mut self, walkable: Vec<Vec<bool>>) {
+        if walkable.len() == self.height && walkable.iter().all(|row| row.len() == self.width) {
+            self.walkable = walkable;
+        }
     }
 }

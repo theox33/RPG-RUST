@@ -7,6 +7,7 @@ use crate::world::World;
 use ::rand::{thread_rng, Rng};
 use combat::{CombatInput, CombatResolution, CombatResult, CombatState, CombatTransition};
 use macroquad::prelude::*;
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -19,18 +20,47 @@ pub const MAP_HEIGHT: usize = 12;
 pub const PLAYER_START_X: usize = 2;
 pub const PLAYER_START_Y: usize = 3;
 pub const MAX_ENEMIES: usize = 4;
+const HOUSE_TILE_WIDTH: f32 = 5.0;
+const HOUSE_TILE_HEIGHT: f32 = 4.0;
+const HOUSE_FIT_MARGIN: f32 = 0.98;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum TileType {
     Herbe,
     Chemin,
     Eau,
+    Maison,
+    Portal,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+enum WorldKind {
+    Plaine,
+    Maison,
+}
+
+impl WorldKind {
+    fn filename(self) -> &'static str {
+        match self {
+            WorldKind::Plaine => "plaine.map",
+            WorldKind::Maison => "maison.map",
+        }
+    }
+
+    fn entry_message(self) -> &'static str {
+        match self {
+            WorldKind::Plaine => "Vous retournez dehors.",
+            WorldKind::Maison => "Vous entrez dans la maison.",
+        }
+    }
 }
 
 pub struct GameTextures {
     pub map_texture: Texture2D,
     pub chemin_src: Rect,
     pub chemin_variants: Vec<Rect>,
+    pub house_src: Rect,
+    pub maison_background: Texture2D,
     pub char_texture: Texture2D,
     pub char_frames: Vec<Rect>,
     pub grass_variants: Vec<Rect>,
@@ -120,7 +150,10 @@ pub struct Game {
     state: GameState,
     messages: Vec<Message>,
     textures: GameTextures,
+    current_world: WorldKind,
+    enemy_cache: HashMap<WorldKind, Vec<Ennemi>>,
     map_tiles: Vec<Vec<TileType>>,
+    house_anchors: Vec<Position>,
     player_anim: PlayerAnim,
     moving: bool,
     move_time: f32,
@@ -134,7 +167,12 @@ pub struct Game {
 }
 
 impl Game {
-    pub fn new(map_texture: Texture2D, char_texture: Texture2D, enemy_texture: Texture2D) -> Self {
+    pub fn new(
+        map_texture: Texture2D,
+        char_texture: Texture2D,
+        enemy_texture: Texture2D,
+        maison_background: Texture2D,
+    ) -> Self {
         let chemin_src = Rect::new(300.0, 20.0, 100.0, 100.0);
         let chemin_variants = vec![
             Rect::new(450.0, 20.0, 100.0, 100.0),
@@ -142,6 +180,7 @@ impl Game {
             Rect::new(740.0, 20.0, 100.0, 100.0),
         ];
         let water_src = Rect::new(170.0, 170.0, 100.0, 100.0);
+        let house_src = Rect::new(640.0, 768.0, 320.0, 256.0);
         let grass_variants = vec![
             Rect::new(20.0, 20.0, 100.0, 100.0),
             Rect::new(170.0, 20.0, 100.0, 100.0),
@@ -180,6 +219,8 @@ impl Game {
             map_texture,
             chemin_src,
             chemin_variants,
+            house_src,
+            maison_background,
             char_texture,
             char_frames,
             grass_variants,
@@ -188,47 +229,30 @@ impl Game {
             water_src,
         };
 
-        let mut map_tiles = load_world_tiles();
+        let mut map_tiles = load_tiles_for_world(WorldKind::Plaine);
         if map_tiles.len() != MAP_HEIGHT || map_tiles[0].len() != MAP_WIDTH {
             map_tiles = default_map_tiles();
         }
 
-        let mut world = World::new(MAP_WIDTH, MAP_HEIGHT);
-        world.add_player(Joueur::nouveau(
+        let mut world_data = World::new(MAP_WIDTH, MAP_HEIGHT);
+        world_data.add_player(Joueur::nouveau(
             0,
             Position {
                 x: PLAYER_START_X,
                 y: PLAYER_START_Y,
             },
         ));
-        spawn_random_enemies(&mut world, &map_tiles, MAX_ENEMIES);
-        let enemy_prev_positions = world
-            .enemies()
-            .iter()
-            .map(|e| e.position())
-            .collect::<Vec<_>>();
-        let enemy_anim = enemy_prev_positions
-            .iter()
-            .map(|pos| EnemyAnim {
-                moving: false,
-                from: *pos,
-                to: *pos,
-                progress: 0.0,
-                frame: 0,
-                timer: 0.0,
-                frame_duration: 0.0,
-            })
-            .collect();
-        let grass_choice = choose_grass_variants(&textures, &map_tiles);
-        let chemin_choice = choose_chemin_variants(&textures, &map_tiles);
-        let world = Arc::new(Mutex::new(world));
-        start_enemy_thread(&world);
-        Self {
-            world,
+
+        let world = Arc::new(Mutex::new(world_data));
+        let mut game = Self {
+            world: Arc::clone(&world),
             state: GameState::Exploration,
             messages: Vec::new(),
             textures,
+            current_world: WorldKind::Plaine,
+            enemy_cache: HashMap::new(),
             map_tiles,
+            house_anchors: Vec::new(),
             player_anim: PlayerAnim::new(),
             moving: false,
             move_time: 0.3,
@@ -241,11 +265,17 @@ impl Game {
                 x: PLAYER_START_X,
                 y: PLAYER_START_Y,
             },
-            grass_choice,
-            chemin_choice,
-            enemy_anim,
-            enemy_prev_positions,
-        }
+            grass_choice: vec![vec![0; MAP_WIDTH]; MAP_HEIGHT],
+            chemin_choice: vec![vec![0; MAP_WIDTH]; MAP_HEIGHT],
+            enemy_anim: Vec::new(),
+            enemy_prev_positions: Vec::new(),
+        };
+
+        game.refresh_map_variants();
+        game.sync_world_walkable_map();
+        game.respawn_enemies_for_current_world();
+        start_enemy_thread(&game.world);
+        game
     }
 
     pub fn frame(&mut self) {
@@ -332,10 +362,13 @@ impl Game {
                 }
             } else if pos.x != prev.x || pos.y != prev.y {
                 let (nx, ny) = (pos.x, pos.y);
-                if nx < MAP_WIDTH
+                let blocked = nx < MAP_WIDTH
                     && ny < MAP_HEIGHT
-                    && matches!(self.map_tiles[ny][nx], TileType::Eau)
-                {
+                    && !matches!(
+                        self.map_tiles[ny][nx],
+                        TileType::Herbe | TileType::Chemin | TileType::Portal
+                    );
+                if blocked {
                     if let Ok(mut world) = self.world.lock() {
                         if let Some(enemy) = world.enemies_mut().get_mut(i) {
                             let epos = enemy.position_mut();
@@ -438,6 +471,10 @@ impl Game {
                 texte: String::from("Vous vous déplacez."),
                 timer: 0.6,
             });
+            if matches!(self.map_tiles[new_pos.y][new_pos.x], TileType::Portal) {
+                self.trigger_portal_transition();
+                return;
+            }
         }
     }
 
@@ -541,6 +578,9 @@ impl Game {
     fn render(&mut self) {
         let (origin_x, origin_y) = self.world_origin();
         self.draw_tiles(origin_x, origin_y);
+        if matches!(self.current_world, WorldKind::Plaine) {
+            self.draw_houses(origin_x, origin_y);
+        }
         if let Ok(world) = self.world.lock() {
             self.draw_player(&world, origin_x, origin_y);
             self.draw_enemies(&world, origin_x, origin_y);
@@ -560,9 +600,17 @@ impl Game {
     }
 
     fn draw_tiles(&self, origin_x: f32, origin_y: f32) {
+        if matches!(self.current_world, WorldKind::Maison) {
+            self.draw_maison_background(origin_x, origin_y);
+        }
         for y in 0..MAP_HEIGHT {
             for x in 0..MAP_WIDTH {
                 let tile = self.map_tiles[y][x];
+                if matches!(self.current_world, WorldKind::Maison)
+                    && !matches!(tile, TileType::Portal)
+                {
+                    continue;
+                }
                 let source = match tile {
                     TileType::Herbe => {
                         let idx = self.grass_choice[y][x]
@@ -579,6 +627,16 @@ impl Game {
                         }
                     }
                     TileType::Eau => self.textures.water_src,
+                    TileType::Maison => self
+                        .textures
+                        .grass_variants
+                        .get(0)
+                        .copied()
+                        .unwrap_or(self.textures.chemin_src),
+                    TileType::Portal => {
+                        // Texture neutre ou rien
+                        Rect::new(0.0, 0.0, 0.0, 0.0)
+                    },
                 };
                 let dest_x = origin_x + x as f32 * TILE_SIZE;
                 let dest_y = origin_y + y as f32 * TILE_SIZE;
@@ -595,6 +653,21 @@ impl Game {
                 );
             }
         }
+    }
+
+    fn draw_maison_background(&self, origin_x: f32, origin_y: f32) {
+        let world_w = MAP_WIDTH as f32 * TILE_SIZE;
+        let world_h = MAP_HEIGHT as f32 * TILE_SIZE;
+        draw_texture_ex(
+            &self.textures.maison_background,
+            origin_x,
+            origin_y,
+            WHITE,
+            DrawTextureParams {
+                dest_size: Some(Vec2::new(world_w, world_h)),
+                ..Default::default()
+            },
+        );
     }
 
     fn draw_player(&self, world: &World, origin_x: f32, origin_y: f32) {
@@ -671,8 +744,145 @@ impl Game {
         }
     }
 
+    fn draw_houses(&self, origin_x: f32, origin_y: f32) {
+        let max_width = TILE_SIZE * HOUSE_TILE_WIDTH;
+        let max_height = TILE_SIZE * HOUSE_TILE_HEIGHT;
+        for house in &self.house_anchors {
+            let src = self.textures.house_src;
+            let scale_w = max_width / src.w;
+            let scale_h = max_height / src.h;
+            let scale = scale_w.min(scale_h) * HOUSE_FIT_MARGIN;
+            let dest_w = src.w * scale;
+            let dest_h = src.h * scale;
+            let offset_x = (max_width - dest_w) * 0.5;
+            let offset_y = max_height - dest_h;
+            let dest_x = origin_x + house.x as f32 * TILE_SIZE + offset_x;
+            let dest_y = origin_y + house.y as f32 * TILE_SIZE + offset_y;
+            draw_texture_ex(
+                &self.textures.map_texture,
+                dest_x,
+                dest_y,
+                WHITE,
+                DrawTextureParams {
+                    dest_size: Some(Vec2::new(dest_w, dest_h)),
+                    source: Some(src),
+                    ..Default::default()
+                },
+            );
+        }
+    }
+
     fn tile_walkable(&self, x: usize, y: usize) -> bool {
-        matches!(self.map_tiles[y][x], TileType::Herbe | TileType::Chemin)
+        matches!(
+            self.map_tiles[y][x],
+            TileType::Herbe | TileType::Chemin | TileType::Portal
+        )
+    }
+
+    fn refresh_map_variants(&mut self) {
+        self.grass_choice = choose_grass_variants(&self.textures, &self.map_tiles);
+        self.chemin_choice = choose_chemin_variants(&self.textures, &self.map_tiles);
+        self.house_anchors = detect_house_anchors(&self.map_tiles);
+    }
+
+    fn sync_world_walkable_map(&self) {
+        if let Ok(mut world) = self.world.lock() {
+            world.update_walkable_map(build_walkable_map(&self.map_tiles));
+        }
+    }
+
+    fn respawn_enemies_for_current_world(&mut self) {
+        let mut snapshot = Vec::new();
+        if let Ok(mut world) = self.world.lock() {
+            world.enemies.clear();
+            if let Some(stored) = self.enemy_cache.get(&self.current_world).cloned() {
+                snapshot = stored.iter().map(|e| e.position()).collect();
+                world.enemies = stored;
+            } else {
+                let cap = enemy_cap(self.current_world);
+                if cap > 0 {
+                    spawn_random_enemies(&mut world, &self.map_tiles, cap);
+                }
+                snapshot = world
+                    .enemies()
+                    .iter()
+                    .map(|e| e.position())
+                    .collect();
+            }
+        }
+        self.rebuild_enemy_animation_state(snapshot);
+    }
+
+    fn store_current_world_enemies(&mut self) {
+        if let Ok(world) = self.world.lock() {
+            self.enemy_cache
+                .insert(self.current_world, world.enemies().to_vec());
+        }
+    }
+
+    fn rebuild_enemy_animation_state(&mut self, positions: Vec<Position>) {
+        self.enemy_prev_positions = positions.clone();
+        self.enemy_anim = positions
+            .into_iter()
+            .map(|pos| EnemyAnim {
+                moving: false,
+                from: pos,
+                to: pos,
+                progress: 0.0,
+                frame: 0,
+                timer: 0.0,
+                frame_duration: 0.0,
+            })
+            .collect();
+    }
+
+    fn move_player_to(&mut self, pos: Position) {
+        if let Ok(mut world) = self.world.lock() {
+            if let Some(player) = world.players_mut().get_mut(0) {
+                let player_pos = player.position_mut();
+                player_pos.x = pos.x;
+                player_pos.y = pos.y;
+            }
+        }
+        self.move_from = pos;
+        self.move_to = pos;
+        self.moving = false;
+        self.move_progress = 0.0;
+        self.player_anim.frame = 0;
+        self.player_anim.timer = 0.0;
+    }
+
+    fn trigger_portal_transition(&mut self) {
+        let target = match self.current_world {
+            WorldKind::Plaine => WorldKind::Maison,
+            WorldKind::Maison => WorldKind::Plaine,
+        };
+        if self.switch_to_world(target) {
+            self.messages.push(Message {
+                texte: target.entry_message().to_string(),
+                timer: 1.2,
+            });
+        }
+    }
+
+    fn switch_to_world(&mut self, target: WorldKind) -> bool {
+        self.store_current_world_enemies();
+        let mut map_tiles = load_tiles_for_world(target);
+        if map_tiles.len() != MAP_HEIGHT || map_tiles[0].len() != MAP_WIDTH {
+            map_tiles = default_map_tiles();
+        }
+        self.map_tiles = map_tiles;
+        self.current_world = target;
+        self.refresh_map_variants();
+        self.sync_world_walkable_map();
+        self.respawn_enemies_for_current_world();
+        let spawn = find_portal_position(&self.map_tiles)
+            .unwrap_or(Position {
+                x: PLAYER_START_X,
+                y: PLAYER_START_Y,
+            });
+        self.move_player_to(spawn);
+        true
     }
 }
 
@@ -750,26 +960,6 @@ fn start_enemy_thread(world: &Arc<Mutex<World>>) {
     });
 }
 
-fn load_world_tiles() -> Vec<Vec<TileType>> {
-    let base = Path::new("worlds");
-    let _ = fs::create_dir_all(base);
-    let mut files = match fs::read_dir(base) {
-        Ok(entries) => entries
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| entry.file_type().map(|ft| ft.is_file()).unwrap_or(false))
-            .map(|entry| entry.path())
-            .collect::<Vec<_>>(),
-        Err(_) => return default_map_tiles(),
-    };
-    files.sort();
-    for path in files {
-        if let Ok(tiles) = parse_world_file(&path) {
-            return tiles;
-        }
-    }
-    default_map_tiles()
-}
-
 fn parse_world_file(path: &Path) -> Result<Vec<Vec<TileType>>, String> {
     let content =
         fs::read_to_string(path).map_err(|e| format!("Impossible de lire {:?}: {}", path, e))?;
@@ -817,11 +1007,30 @@ fn parse_tile_value(token: &str) -> Result<TileType, String> {
         .parse()
         .map_err(|_| format!("Valeur de tuile invalide: {}", token))?;
     match value {
+        -2 => Ok(TileType::Maison),
         -1 => Ok(TileType::Eau),
         0 => Ok(TileType::Herbe),
         1 | 2 => Ok(TileType::Chemin),
+        3 => Ok(TileType::Portal),
         other => Err(format!("Code tuile inconnu: {}", other)),
     }
+}
+
+fn detect_house_anchors(tiles: &[Vec<TileType>]) -> Vec<Position> {
+    let mut anchors = Vec::new();
+    for y in 0..MAP_HEIGHT {
+        for x in 0..MAP_WIDTH {
+            if tiles[y][x] != TileType::Maison {
+                continue;
+            }
+            let left_is_house = x > 0 && tiles[y][x - 1] == TileType::Maison;
+            let top_is_house = y > 0 && tiles[y - 1][x] == TileType::Maison;
+            if !left_is_house && !top_is_house {
+                anchors.push(Position { x, y });
+            }
+        }
+    }
+    anchors
 }
 
 fn default_map_tiles() -> Vec<Vec<TileType>> {
@@ -835,4 +1044,58 @@ fn default_map_tiles() -> Vec<Vec<TileType>> {
         }
     }
     tiles
+}
+
+fn load_tiles_for_world(kind: WorldKind) -> Vec<Vec<TileType>> {
+    let target = Path::new("worlds").join(kind.filename());
+    parse_world_file(&target).unwrap_or_else(|_| load_first_world_in_dir())
+}
+
+fn load_first_world_in_dir() -> Vec<Vec<TileType>> {
+    let base = Path::new("worlds");
+    let _ = fs::create_dir_all(base);
+    let mut files = match fs::read_dir(base) {
+        Ok(entries) => entries
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_type().map(|ft| ft.is_file()).unwrap_or(false))
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>(),
+        Err(_) => return default_map_tiles(),
+    };
+    files.sort();
+    for path in files {
+        if let Ok(tiles) = parse_world_file(&path) {
+            return tiles;
+        }
+    }
+    default_map_tiles()
+}
+
+fn build_walkable_map(tiles: &[Vec<TileType>]) -> Vec<Vec<bool>> {
+    tiles
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|tile| matches!(tile, TileType::Herbe | TileType::Chemin | TileType::Portal))
+                .collect::<Vec<bool>>()
+        })
+        .collect()
+}
+
+fn find_portal_position(tiles: &[Vec<TileType>]) -> Option<Position> {
+    for (y, row) in tiles.iter().enumerate() {
+        for (x, tile) in row.iter().enumerate() {
+            if matches!(tile, TileType::Portal) {
+                return Some(Position { x, y });
+            }
+        }
+    }
+    None
+}
+
+fn enemy_cap(kind: WorldKind) -> usize {
+    match kind {
+        WorldKind::Plaine => MAX_ENEMIES,
+        WorldKind::Maison => 0,
+    }
 }
