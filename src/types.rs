@@ -18,7 +18,11 @@ pub struct Stats {
 
 impl Stats {
     pub const fn new(vie: u32, attaque: u32, vitesse: u32) -> Self {
-        Self { vie, attaque, vitesse }
+        Self {
+            vie,
+            attaque,
+            vitesse,
+        }
     }
 
     pub fn est_vivant(&self) -> bool {

@@ -93,7 +93,11 @@ impl CombatState {
                     match action {
                         PlayerAction::Attack => {
                             let base_dmg = world.players()[self.player_idx].attaque();
-                            let damage = if self.enemy_defending { base_dmg / 2 } else { base_dmg };
+                            let damage = if self.enemy_defending {
+                                base_dmg / 2
+                            } else {
+                                base_dmg
+                            };
                             if let Some(enemy) = world.enemies_mut().get_mut(self.enemy_idx) {
                                 enemy.inflige_degats(damage);
                             }
@@ -108,7 +112,8 @@ impl CombatState {
                             self.player_defending = true;
                             self.player_turn = false;
                             messages.push(CombatMessage {
-                                texte: "Vous vous préparez à encaisser (dégâts réduits)".to_string(),
+                                texte: "Vous vous préparez à encaisser (dégâts réduits)"
+                                    .to_string(),
                                 duree: 0.8,
                             });
                         }
@@ -172,7 +177,11 @@ impl CombatState {
 
         if !self.player_turn {
             let base_dmg = world.enemies()[self.enemy_idx].attaque();
-            let damage = if self.player_defending { base_dmg / 2 } else { base_dmg };
+            let damage = if self.player_defending {
+                base_dmg / 2
+            } else {
+                base_dmg
+            };
             if let Some(player) = world.players_mut().get_mut(self.player_idx) {
                 player.inflige_degats(damage);
             }
@@ -219,18 +228,58 @@ impl CombatState {
     pub fn draw_ui(&self, world: &World, tile_size: f32) {
         let p = &world.players()[self.player_idx];
         let e = &world.enemies()[self.enemy_idx];
-        let status = format!("Joueur HP: {}   Ennemi HP: {}", p.stats().vie, e.stats().vie);
+        let status = format!(
+            "Joueur HP: {}   Ennemi HP: {}",
+            p.stats().vie,
+            e.stats().vie
+        );
         let base_y = (world.height as f32) * tile_size + 20.0;
         macroquad::prelude::draw_text(&status, 10.0, base_y, 20.0, macroquad::prelude::DARKGRAY);
 
         let buttons = self.boutons;
-        macroquad::prelude::draw_rectangle(buttons.attaquer.x, buttons.attaquer.y, buttons.attaquer.w, buttons.attaquer.h, macroquad::prelude::LIGHTGRAY);
-        macroquad::prelude::draw_rectangle(buttons.defendre.x, buttons.defendre.y, buttons.defendre.w, buttons.defendre.h, macroquad::prelude::LIGHTGRAY);
-        macroquad::prelude::draw_rectangle(buttons.fuir.x, buttons.fuir.y, buttons.fuir.w, buttons.fuir.h, macroquad::prelude::LIGHTGRAY);
+        macroquad::prelude::draw_rectangle(
+            buttons.attaquer.x,
+            buttons.attaquer.y,
+            buttons.attaquer.w,
+            buttons.attaquer.h,
+            macroquad::prelude::LIGHTGRAY,
+        );
+        macroquad::prelude::draw_rectangle(
+            buttons.defendre.x,
+            buttons.defendre.y,
+            buttons.defendre.w,
+            buttons.defendre.h,
+            macroquad::prelude::LIGHTGRAY,
+        );
+        macroquad::prelude::draw_rectangle(
+            buttons.fuir.x,
+            buttons.fuir.y,
+            buttons.fuir.w,
+            buttons.fuir.h,
+            macroquad::prelude::LIGHTGRAY,
+        );
 
-        macroquad::prelude::draw_text("Attaquer", buttons.attaquer.x + 12.0, buttons.attaquer.y + 24.0, 20.0, macroquad::prelude::DARKGRAY);
-        macroquad::prelude::draw_text("Défendre", buttons.defendre.x + 12.0, buttons.defendre.y + 24.0, 20.0, macroquad::prelude::DARKGRAY);
-        macroquad::prelude::draw_text("Fuir", buttons.fuir.x + 12.0, buttons.fuir.y + 24.0, 20.0, macroquad::prelude::DARKGRAY);
+        macroquad::prelude::draw_text(
+            "Attaquer",
+            buttons.attaquer.x + 12.0,
+            buttons.attaquer.y + 24.0,
+            20.0,
+            macroquad::prelude::DARKGRAY,
+        );
+        macroquad::prelude::draw_text(
+            "Défendre",
+            buttons.defendre.x + 12.0,
+            buttons.defendre.y + 24.0,
+            20.0,
+            macroquad::prelude::DARKGRAY,
+        );
+        macroquad::prelude::draw_text(
+            "Fuir",
+            buttons.fuir.x + 12.0,
+            buttons.fuir.y + 24.0,
+            20.0,
+            macroquad::prelude::DARKGRAY,
+        );
     }
 
     fn extract_player_action(&self, input: &CombatInput) -> Option<PlayerAction> {

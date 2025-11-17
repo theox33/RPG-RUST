@@ -1,64 +1,44 @@
 pub mod combat;
 
-use crate::types::{Combatant, Position};
 use crate::ennemi::Ennemi;
 use crate::joueur::Joueur;
+use crate::types::{Combatant, Position};
 use crate::world::World;
+use ::rand::{thread_rng, Rng};
 use combat::{CombatInput, CombatResolution, CombatResult, CombatState, CombatTransition};
 use macroquad::prelude::*;
+use std::fs;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-use ::rand::{thread_rng, Rng};
 
-/// Taille (en pixels) d'une cellule de la grille. Ajustez pour zoomer/dézoomer.
 pub const TILE_SIZE: f32 = 48.0;
-
-/// Largeur de la carte (nombre de colonnes).
 pub const MAP_WIDTH: usize = 20;
-/// Hauteur de la carte (nombre de lignes).
 pub const MAP_HEIGHT: usize = 12;
-/// Coordonnée X initiale du joueur.
 pub const PLAYER_START_X: usize = 2;
-/// Coordonnée Y initiale du joueur.
 pub const PLAYER_START_Y: usize = 3;
-/// Nombre maximum d'ennemis générés par carte.
 pub const MAX_ENEMIES: usize = 4;
 
-/// Types de tuiles présents dans la carte. `Herbe` est un sol classique où
-/// les ennemis peuvent apparaître; `Chemin` représente un chemin sablonneux
-/// reliant le point de départ aux bords de la carte.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum TileType {
-    /// Sol standard permettant au joueur et aux ennemis de se déplacer.
     Herbe,
-    /// Chemin reliant la position initiale aux bords de la carte.
     Chemin,
-    /// Eau représentant une rivière. Les personnages ne peuvent pas s'y déplacer.
     Eau,
 }
 
-/// Regroupe toutes les textures nécessaires au rendu et leurs rectangles de
-/// découpe. La feuille de carte (`map_texture`) est découpée en deux zones :
-/// l'herbe (dans `grass_variants`) et le chemin (`chemin_src`). La feuille
-/// d'animation (`char_texture`) contient 3 colonnes et 4 lignes de frames ;
-/// les rectangles correspondants sont stockés dans `char_frames`. Les ennemis
-/// utilisent une feuille séparée (`enemy_texture`) découpée en 2 colonnes × 3
-/// lignes pour 6 frames.
 pub struct GameTextures {
     pub map_texture: Texture2D,
     pub chemin_src: Rect,
+    pub chemin_variants: Vec<Rect>,
     pub char_texture: Texture2D,
     pub char_frames: Vec<Rect>,
     pub grass_variants: Vec<Rect>,
     pub enemy_texture: Texture2D,
     pub enemy_frames: Vec<Rect>,
-    /// Rectangle source pour la texture de l'eau dans la carte.
     pub water_src: Rect,
 }
 
-/// Directions possibles du personnage. Chaque direction dispose d'un nombre
-/// différent de frames d'animation.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Direction {
     Down,
@@ -67,10 +47,17 @@ enum Direction {
     Up,
 }
 
-/// Animation du personnage principal. Stocke la direction courante du personnage,
-/// l'indice de frame en cours et un accumulateur de temps pour faire défiler
-/// les animations. Le personnage possède un nombre variable de frames selon
-/// la direction : 3 frames pour chaque direction.
+impl Direction {
+    fn frame_offset(self) -> usize {
+        match self {
+            Direction::Down => 0,
+            Direction::Right => 3,
+            Direction::Left => 6,
+            Direction::Up => 9,
+        }
+    }
+}
+
 #[derive(Clone)]
 struct PlayerAnim {
     direction: Direction,
@@ -89,14 +76,12 @@ impl PlayerAnim {
         }
     }
 
-    /// Met à jour l'animation en fonction du temps écoulé et du déplacement.
     fn update(&mut self, dt: f32, moving: bool) {
         if moving {
             self.timer += dt;
             if self.timer > self.frame_duration {
                 self.timer -= self.frame_duration;
-                let max_frames = 3;
-                self.frame = (self.frame + 1) % max_frames;
+                self.frame = (self.frame + 1) % 3;
             }
         } else {
             self.frame = 0;
@@ -104,20 +89,11 @@ impl PlayerAnim {
         }
     }
 
-    /// Retourne l'indice du rectangle source à utiliser dans la spritesheet.
     fn current_frame_index(&self) -> usize {
-        match self.direction {
-            Direction::Down => 0 + self.frame,
-            Direction::Right => 3 + self.frame,
-            Direction::Left => 6 + self.frame,
-            Direction::Up => 9 + self.frame,
-        }
+        self.direction.frame_offset() + self.frame
     }
 }
 
-/// Animation et état de déplacement d'un ennemi (slime). Chaque déplacement
-/// utilise 6 frames : 3 pour la montée (colonne gauche) et 3 pour
-/// l'atterrissage (colonne droite lue de bas en haut).
 #[derive(Clone)]
 struct EnemyAnim {
     moving: bool,
@@ -127,6 +103,16 @@ struct EnemyAnim {
     frame: usize,
     timer: f32,
     frame_duration: f32,
+}
+
+struct Message {
+    texte: String,
+    timer: f32,
+}
+
+enum GameState {
+    Exploration,
+    Combat(CombatState),
 }
 
 pub struct Game {
@@ -142,58 +128,20 @@ pub struct Game {
     move_from: Position,
     move_to: Position,
     grass_choice: Vec<Vec<usize>>,
+    chemin_choice: Vec<Vec<usize>>,
     enemy_anim: Vec<EnemyAnim>,
     enemy_prev_positions: Vec<Position>,
 }
 
-enum GameState {
-    Exploration,
-    Combat(CombatState),
-}
-
-struct Message {
-    texte: String,
-    timer: f32,
-}
-
 impl Game {
-    /// Crée un nouveau jeu à partir des textures fournies. La carte est
-    /// générée avec de l'herbe et un chemin. Les ennemis utilisent une feuille
-    /// de texture séparée pour leur animation.
     pub fn new(map_texture: Texture2D, char_texture: Texture2D, enemy_texture: Texture2D) -> Self {
-        // Générer la grille de la carte
-        let mut map_tiles = generate_map_tiles(MAP_WIDTH, MAP_HEIGHT, PLAYER_START_X, PLAYER_START_Y);
-        // Insérer une rivière en bas à gauche : un segment horizontal partant du bord gauche
-        // et un segment vertical descendant vers le bas. Ces cases sont marquées comme Eau.
-        // Segment horizontal (sur la ligne avant-dernière, colonnes 0 à 2)
-        let river_row = MAP_HEIGHT.saturating_sub(2);
-        for x in 0..3.min(MAP_WIDTH) {
-            if river_row < MAP_HEIGHT && x < MAP_WIDTH {
-                map_tiles[river_row][x] = TileType::Eau;
-            }
-        }
-        // Segment vertical (sur la première colonne, des deux dernières lignes)
-        for y in river_row..MAP_HEIGHT {
-            if y < MAP_HEIGHT {
-                map_tiles[y][0] = TileType::Eau;
-            }
-        }
-        // Initialiser le monde et ajouter le joueur
-        let mut world = World::new(MAP_WIDTH, MAP_HEIGHT);
-        world.add_player(Joueur::nouveau(
-            0,
-            Position {
-                x: PLAYER_START_X,
-                y: PLAYER_START_Y,
-            },
-        ));
-        // Générer des ennemis sur les cases d'herbe (après génération de la rivière)
-        spawn_random_enemies(&mut world, &map_tiles, MAX_ENEMIES);
-        // Définir les rectangles sources pour le chemin et l'eau
         let chemin_src = Rect::new(300.0, 20.0, 100.0, 100.0);
-        // L'eau est extraite de la feuille de carte à partir de la deuxième ligne (bleue).
+        let chemin_variants = vec![
+            Rect::new(450.0, 20.0, 100.0, 100.0),
+            Rect::new(595.0, 20.0, 100.0, 100.0),
+            Rect::new(740.0, 20.0, 100.0, 100.0),
+        ];
         let water_src = Rect::new(170.0, 170.0, 100.0, 100.0);
-        // Variantes d'herbe (5 variantes)
         let grass_variants = vec![
             Rect::new(20.0, 20.0, 100.0, 100.0),
             Rect::new(170.0, 20.0, 100.0, 100.0),
@@ -201,7 +149,6 @@ impl Game {
             Rect::new(450.0, 170.0, 100.0, 100.0),
             Rect::new(450.0, 320.0, 100.0, 100.0),
         ];
-        // Découper les frames du personnage (3 colonnes × 4 lignes)
         let cols = 3;
         let rows = 4;
         let cw = char_texture.width() / cols as f32;
@@ -218,24 +165,21 @@ impl Game {
                 ));
             }
         }
-        // Découper les frames de l'ennemi (2 colonnes × 3 lignes)
         let e_cols = 2;
         let e_rows = 3;
         let ecw = enemy_texture.width() / e_cols as f32;
         let ech = enemy_texture.height() / e_rows as f32;
         let mut enemy_frames = Vec::new();
-        // Colonne gauche : montée
         for row in 0..e_rows {
             enemy_frames.push(Rect::new(0.0, row as f32 * ech, ecw, ech));
         }
-        // Colonne droite : atterrissage (du bas vers le haut)
         for row in (0..e_rows).rev() {
             enemy_frames.push(Rect::new(ecw, row as f32 * ech, ecw, ech));
         }
-        // Construire la structure GameTextures
         let textures = GameTextures {
             map_texture,
             chemin_src,
+            chemin_variants,
             char_texture,
             char_frames,
             grass_variants,
@@ -243,13 +187,27 @@ impl Game {
             enemy_frames,
             water_src,
         };
-        // Capturer les positions initiales des ennemis avant de placer le monde dans un Arc
-        let initial_enemy_positions: Vec<Position> = world
+
+        let mut map_tiles = load_world_tiles();
+        if map_tiles.len() != MAP_HEIGHT || map_tiles[0].len() != MAP_WIDTH {
+            map_tiles = default_map_tiles();
+        }
+
+        let mut world = World::new(MAP_WIDTH, MAP_HEIGHT);
+        world.add_player(Joueur::nouveau(
+            0,
+            Position {
+                x: PLAYER_START_X,
+                y: PLAYER_START_Y,
+            },
+        ));
+        spawn_random_enemies(&mut world, &map_tiles, MAX_ENEMIES);
+        let enemy_prev_positions = world
             .enemies()
             .iter()
             .map(|e| e.position())
-            .collect();
-        let enemy_anim = initial_enemy_positions
+            .collect::<Vec<_>>();
+        let enemy_anim = enemy_prev_positions
             .iter()
             .map(|pos| EnemyAnim {
                 moving: false,
@@ -260,38 +218,11 @@ impl Game {
                 timer: 0.0,
                 frame_duration: 0.0,
             })
-            .collect::<Vec<EnemyAnim>>();
-        let enemy_prev_positions = initial_enemy_positions.clone();
-        // Partager le monde entre threads
+            .collect();
+        let grass_choice = choose_grass_variants(&textures, &map_tiles);
+        let chemin_choice = choose_chemin_variants(&textures, &map_tiles);
         let world = Arc::new(Mutex::new(world));
-        let thread_world = Arc::clone(&world);
-        thread::spawn(move || {
-            let tick_ms = 400u64;
-            let dt = (tick_ms as f32) / 1000.0;
-            loop {
-                {
-                    let mut world = thread_world.lock().unwrap();
-                    world.wander_enemies(dt);
-                }
-                thread::sleep(Duration::from_millis(tick_ms));
-            }
-        });
-        // Choisir une variante d'herbe pour chaque case d'herbe
-        let mut rng = thread_rng();
-        let grass_choice = (0..MAP_HEIGHT)
-            .map(|y| {
-                (0..MAP_WIDTH)
-                    .map(|x| {
-                        if map_tiles[y][x] == TileType::Herbe {
-                            rng.gen_range(0..textures.grass_variants.len())
-                        } else {
-                            0usize
-                        }
-                    })
-                    .collect::<Vec<usize>>()
-            })
-            .collect::<Vec<Vec<usize>>>();
-        // Retourner la structure Game
+        start_enemy_thread(&world);
         Self {
             world,
             state: GameState::Exploration,
@@ -302,9 +233,16 @@ impl Game {
             moving: false,
             move_time: 0.3,
             move_progress: 0.0,
-            move_from: Position { x: PLAYER_START_X, y: PLAYER_START_Y },
-            move_to: Position { x: PLAYER_START_X, y: PLAYER_START_Y },
+            move_from: Position {
+                x: PLAYER_START_X,
+                y: PLAYER_START_Y,
+            },
+            move_to: Position {
+                x: PLAYER_START_X,
+                y: PLAYER_START_Y,
+            },
             grass_choice,
+            chemin_choice,
             enemy_anim,
             enemy_prev_positions,
         }
@@ -324,85 +262,6 @@ impl Game {
         self.render();
     }
 
-    /// Met à jour la progression du déplacement du joueur.
-    fn update_movement(&mut self, dt: f32) {
-        if self.moving {
-            self.move_progress += dt / self.move_time;
-            if self.move_progress >= 1.0 {
-                self.moving = false;
-                self.move_progress = 0.0;
-            }
-        }
-    }
-
-    /// Met à jour l'animation et la glissade des ennemis.
-    fn update_enemy_movement(&mut self, dt: f32) {
-        let current_positions: Vec<Position> = {
-            let world = self.world.lock().unwrap();
-            world.enemies().iter().map(|e| e.position()).collect()
-        };
-        while self.enemy_anim.len() < current_positions.len() {
-            self.enemy_anim.push(EnemyAnim {
-                moving: false,
-                from: current_positions[self.enemy_anim.len()],
-                to: current_positions[self.enemy_anim.len()],
-                progress: 0.0,
-                frame: 0,
-                timer: 0.0,
-                frame_duration: 0.0,
-            });
-            self.enemy_prev_positions.push(current_positions[self.enemy_prev_positions.len()]);
-        }
-        for i in 0..current_positions.len() {
-            let pos = current_positions[i];
-            let prev = self.enemy_prev_positions[i];
-            let anim = &mut self.enemy_anim[i];
-            if anim.moving {
-                anim.progress += dt / self.move_time;
-                anim.timer += dt;
-                if anim.frame_duration > 0.0 && anim.timer > anim.frame_duration {
-                    anim.timer -= anim.frame_duration;
-                    anim.frame = (anim.frame + 1) % 6;
-                }
-                if anim.progress >= 1.0 {
-                    anim.moving = false;
-                    anim.progress = 0.0;
-                    anim.frame = 0;
-                    anim.timer = 0.0;
-                    self.enemy_prev_positions[i] = anim.to;
-                }
-            } else {
-                if pos.x != prev.x || pos.y != prev.y {
-                    // Vérifier si la nouvelle case n'est pas de l'eau. Si c'est de l'eau,
-                    // annuler le déplacement en restaurant l'ancienne position de l'ennemi.
-                    let ny = pos.y;
-                    let nx = pos.x;
-                    if nx < MAP_WIDTH && ny < MAP_HEIGHT && self.map_tiles[ny][nx] == TileType::Eau {
-                        // Revenir à la position précédente dans le monde
-                        if let Ok(mut w) = self.world.lock() {
-                            if let Some(enemy) = w.enemies.get_mut(i) {
-                                let epos = enemy.position_mut();
-                                epos.x = prev.x;
-                                epos.y = prev.y;
-                            }
-                        }
-                        // Mettre à jour la position courante et ne pas déclencher d'animation
-                        self.enemy_prev_positions[i] = prev;
-                    } else {
-                        anim.moving = true;
-                        anim.from = prev;
-                        anim.to = pos;
-                        anim.progress = 0.0;
-                        anim.frame = 0;
-                        anim.timer = 0.0;
-                        anim.frame_duration = self.move_time / 6.0;
-                        self.enemy_prev_positions[i] = pos;
-                    }
-                }
-            }
-        }
-    }
-
     fn update_messages(&mut self, dt: f32) {
         for msg in &mut self.messages {
             if msg.timer > dt {
@@ -414,11 +273,94 @@ impl Game {
         self.messages.retain(|msg| msg.timer > 0.0);
     }
 
+    fn update_movement(&mut self, dt: f32) {
+        if self.moving {
+            self.move_progress += dt / self.move_time;
+            if self.move_progress >= 1.0 {
+                self.moving = false;
+                self.move_progress = 0.0;
+            }
+        }
+    }
+
+    fn update_enemy_movement(&mut self, dt: f32) {
+        let positions = match self.world.lock() {
+            Ok(world) => world
+                .enemies()
+                .iter()
+                .map(|e| e.position())
+                .collect::<Vec<_>>(),
+            Err(_) => return,
+        };
+        self.enemy_anim.truncate(positions.len());
+        self.enemy_prev_positions.truncate(positions.len());
+        while self.enemy_anim.len() < positions.len() {
+            let pos = positions[self.enemy_anim.len()];
+            self.enemy_anim.push(EnemyAnim {
+                moving: false,
+                from: pos,
+                to: pos,
+                progress: 0.0,
+                frame: 0,
+                timer: 0.0,
+                frame_duration: 0.0,
+            });
+        }
+        while self.enemy_prev_positions.len() < positions.len() {
+            self.enemy_prev_positions
+                .push(positions[self.enemy_prev_positions.len()]);
+        }
+        for (i, pos) in positions.iter().enumerate() {
+            let prev = self.enemy_prev_positions[i];
+            let anim = &mut self.enemy_anim[i];
+            if anim.moving {
+                anim.progress += dt / self.move_time;
+                anim.timer += dt;
+                if anim.frame_duration > 0.0 && anim.timer > anim.frame_duration {
+                    anim.timer -= anim.frame_duration;
+                    anim.frame = (anim.frame + 1) % self.textures.enemy_frames.len();
+                }
+                if anim.progress >= 1.0 {
+                    anim.moving = false;
+                    anim.progress = 0.0;
+                    anim.frame = 0;
+                    anim.timer = 0.0;
+                    self.enemy_prev_positions[i] = anim.to;
+                }
+            } else if pos.x != prev.x || pos.y != prev.y {
+                let (nx, ny) = (pos.x, pos.y);
+                if nx < MAP_WIDTH
+                    && ny < MAP_HEIGHT
+                    && matches!(self.map_tiles[ny][nx], TileType::Eau)
+                {
+                    if let Ok(mut world) = self.world.lock() {
+                        if let Some(enemy) = world.enemies_mut().get_mut(i) {
+                            let epos = enemy.position_mut();
+                            epos.x = prev.x;
+                            epos.y = prev.y;
+                        }
+                    }
+                    self.enemy_prev_positions[i] = prev;
+                } else {
+                    anim.moving = true;
+                    anim.from = prev;
+                    anim.to = *pos;
+                    anim.progress = 0.0;
+                    anim.frame = 0;
+                    anim.timer = 0.0;
+                    anim.frame_duration = self.move_time / self.textures.enemy_frames.len() as f32;
+                    self.enemy_prev_positions[i] = *pos;
+                }
+            }
+        }
+    }
+
     fn update_exploration(&mut self, dt: f32) {
         if self.moving {
             self.player_anim.update(dt, true);
             return;
         }
+
         let mut dx: isize = 0;
         let mut dy: isize = 0;
         if is_key_down(KeyCode::Up) || is_key_down(KeyCode::Z) {
@@ -431,6 +373,7 @@ impl Game {
         } else if is_key_down(KeyCode::Left) || is_key_down(KeyCode::Q) {
             dx = -1;
         }
+
         let moving_input = dx != 0 || dy != 0;
         if moving_input {
             if is_key_down(KeyCode::Up) || is_key_down(KeyCode::Z) {
@@ -445,49 +388,72 @@ impl Game {
             }
         }
         self.player_anim.update(dt, moving_input);
-        let mut world = self.world.lock().unwrap();
-        if dx != 0 || dy != 0 {
-            let old_pos = world.players()[0].position();
-            let nx = old_pos.x as isize + dx;
-            let ny = old_pos.y as isize + dy;
-            if nx >= 0 && ny >= 0 {
-                let (nxu, nyu) = (nx as usize, ny as usize);
-                if nxu < MAP_WIDTH && nyu < MAP_HEIGHT {
-                    if self.map_tiles[nyu][nxu] != TileType::Eau {
-                        // Vérifier si un ennemi est sur la case cible
-                        if let Some(e_idx) = world.find_enemy_on_tile(nxu, nyu) {
-                            self.messages.push(Message {
-                                texte: String::from("Vous tentez d'entrer sur la case d'un ennemi : combat engagé !"),
-                                timer: 1.2,
-                            });
-                            world.enemies_frozen = true;
-                            let player_speed = world.players()[0].vitesse();
-                            let enemy_speed = world.enemies()[e_idx].vitesse();
-                            let player_first = player_speed >= enemy_speed;
-                            let combat_state = CombatState::with_initiative(0, e_idx, player_first);
-                            self.state = GameState::Combat(combat_state);
-                        } else {
-                            // Déplacement normal
-                            let moved = world.move_player(0, dx, dy);
-                            if moved {
-                                let new_pos = world.players()[0].position();
-                                self.moving = true;
-                                self.move_progress = 0.0;
-                                self.move_from = Position { x: old_pos.x, y: old_pos.y };
-                                self.move_to = Position { x: new_pos.x, y: new_pos.y };
-                                self.player_anim.frame = 0;
-                                self.player_anim.timer = 0.0;
-                                let nframes = 3;
-                                self.player_anim.frame_duration = self.move_time / nframes as f32;
-                                self.messages.push(Message {
-                                    texte: String::from("Vous vous déplacez."),
-                                    timer: 0.6,
-                                });
-                            }
-                        }
-                    }
-                }
+        if !moving_input {
+            return;
+        }
+
+        let mut world = match self.world.lock() {
+            Ok(world) => world,
+            Err(_) => return,
+        };
+        if world.players().is_empty() {
+            return;
+        }
+        let old_pos = world.players()[0].position();
+        let nx = old_pos.x as isize + dx;
+        let ny = old_pos.y as isize + dy;
+        if nx < 0 || ny < 0 || nx >= MAP_WIDTH as isize || ny >= MAP_HEIGHT as isize {
+            return;
+        }
+        let (nxu, nyu) = (nx as usize, ny as usize);
+        if !self.tile_walkable(nxu, nyu) {
+            return;
+        }
+        if let Some(e_idx) = world.find_enemy_on_tile(nxu, nyu) {
+            self.messages.push(Message {
+                texte: String::from(
+                    "Vous tentez d'entrer sur la case d'un ennemi : combat engagé !",
+                ),
+                timer: 1.2,
+            });
+            world.enemies_frozen = true;
+            let player_speed = world.players()[0].vitesse();
+            let enemy_speed = world.enemies()[e_idx].vitesse();
+            let player_first = player_speed >= enemy_speed;
+            self.state = GameState::Combat(CombatState::with_initiative(0, e_idx, player_first));
+        } else if world.move_player(0, dx, dy) {
+            let new_pos = world.players()[0].position();
+            drop(world);
+            self.begin_move_animation(old_pos, new_pos);
+            self.messages.push(Message {
+                texte: String::from("Vous vous déplacez."),
+                timer: 0.6,
+            });
+        }
+    }
+
+    fn begin_move_animation(&mut self, from: Position, to: Position) {
+        self.moving = true;
+        self.move_progress = 0.0;
+        self.move_from = from;
+        self.move_to = to;
+        self.player_anim.frame = 0;
+        self.player_anim.timer = 0.0;
+        let nframes = 3;
+        self.player_anim.frame_duration = self.move_time / nframes as f32;
+    }
+
+    fn update_combat_state(&mut self) {
+        let current = std::mem::replace(&mut self.state, GameState::Exploration);
+        if let GameState::Combat(mut state) = current {
+            let still_fighting = self.update_combat(&mut state);
+            if still_fighting {
+                self.state = GameState::Combat(state);
+            } else if let Ok(mut world) = self.world.lock() {
+                world.enemies_frozen = false;
             }
+        } else {
+            self.state = current;
         }
     }
 
@@ -499,15 +465,20 @@ impl Game {
         } else {
             None
         };
-        let mut world = self.world.lock().unwrap();
+        let mut world = match self.world.lock() {
+            Ok(world) => world,
+            Err(_) => return false,
+        };
         let input = CombatInput {
             keys_pressed: keys,
             mouse_click,
             tile_size: TILE_SIZE,
             world_height: world.height,
         };
-        let CombatResolution { messages, transition } = state.update(&mut world, &input);
-        drop(world);
+        let CombatResolution {
+            messages,
+            transition,
+        } = state.update(&mut world, &input);
         for msg in messages {
             self.messages.push(Message {
                 texte: msg.texte,
@@ -517,237 +488,320 @@ impl Game {
         match transition {
             CombatTransition::Continue => true,
             CombatTransition::Terminer(result) => {
-                self.handle_combat_result(result);
+                if let CombatResult::EnnemiVainqueur | CombatResult::DoubleKo = result {
+                    self.messages.push(Message {
+                        texte: String::from("Vous êtes vaincu..."),
+                        timer: 2.0,
+                    });
+                }
                 false
             }
         }
     }
 
-    fn handle_combat_result(&mut self, result: CombatResult) {
-        let texte = match result {
-            CombatResult::JoueurVainqueur => "Combat gagné : l'ennemi est vaincu.".to_string(),
-            CombatResult::EnnemiVainqueur => "Défaite : le joueur est hors combat.".to_string(),
-            CombatResult::DoubleKo => "Double K.O. : tout le monde tombe !".to_string(),
-            CombatResult::Fuite => "Vous avez fui le combat.".to_string(),
-        };
-        self.messages.push(Message { texte, timer: 1.8 });
+    fn collect_combat_keys(&self) -> Vec<KeyCode> {
+        [KeyCode::A, KeyCode::D, KeyCode::F]
+            .iter()
+            .copied()
+            .filter(|key| is_key_pressed(*key))
+            .collect()
     }
 
-    fn update_combat_state(&mut self) {
-        let current = std::mem::replace(&mut self.state, GameState::Exploration);
-        if let GameState::Combat(mut state) = current {
-            let still_fighting = self.update_combat(&mut state);
-            if still_fighting {
-                self.state = GameState::Combat(state);
-            } else {
-                // Combat terminé, retour à l'exploration
-                if let Ok(mut world) = self.world.lock() {
-                    world.enemies_frozen = false;
-                }
-                self.state = GameState::Exploration;
+    fn render(&mut self) {
+        let (origin_x, origin_y) = self.world_origin();
+        self.draw_tiles(origin_x, origin_y);
+        if let Ok(world) = self.world.lock() {
+            self.draw_player(&world, origin_x, origin_y);
+            self.draw_enemies(&world, origin_x, origin_y);
+            if let GameState::Combat(state) = &self.state {
+                state.draw_ui(&world, TILE_SIZE);
             }
-        } else {
-            self.state = current;
         }
-    }
-
-    fn render(&self) {
-        let world = self.world.lock().unwrap();
-        self.draw_grid(&world);
-        self.draw_entities(&world);
-        if let GameState::Combat(state) = &self.state {
-            state.draw_ui(&world, TILE_SIZE);
-        }
-        drop(world);
         self.draw_messages();
     }
 
-    fn draw_grid(&self, world: &World) {
-        for y in 0..world.height {
-            for x in 0..world.width {
-                let x_f = x as f32 * TILE_SIZE;
-                let y_f = y as f32 * TILE_SIZE;
-                match self.map_tiles[y][x] {
+    fn world_origin(&self) -> (f32, f32) {
+        let world_w = MAP_WIDTH as f32 * TILE_SIZE;
+        let world_h = MAP_HEIGHT as f32 * TILE_SIZE;
+        let origin_x = ((screen_width() - world_w) * 0.5).max(0.0);
+        let origin_y = ((screen_height() - world_h) * 0.5).max(0.0);
+        (origin_x, origin_y)
+    }
+
+    fn draw_tiles(&self, origin_x: f32, origin_y: f32) {
+        for y in 0..MAP_HEIGHT {
+            for x in 0..MAP_WIDTH {
+                let tile = self.map_tiles[y][x];
+                let source = match tile {
                     TileType::Herbe => {
-                        let variant_index = self.grass_choice[y][x];
-                        let src = self.textures.grass_variants[variant_index];
-                        draw_texture_ex(
-                            &self.textures.map_texture,
-                            x_f,
-                            y_f,
-                            WHITE,
-                            DrawTextureParams {
-                                dest_size: Some(Vec2::new(TILE_SIZE, TILE_SIZE)),
-                                source: Some(src),
-                                ..Default::default()
-                            },
-                        );
+                        let idx = self.grass_choice[y][x]
+                            .min(self.textures.grass_variants.len().saturating_sub(1));
+                        self.textures.grass_variants[idx]
                     }
                     TileType::Chemin => {
-                        draw_texture_ex(
-                            &self.textures.map_texture,
-                            x_f,
-                            y_f,
-                            WHITE,
-                            DrawTextureParams {
-                                dest_size: Some(Vec2::new(TILE_SIZE, TILE_SIZE)),
-                                source: Some(self.textures.chemin_src),
-                                ..Default::default()
-                            },
-                        );
+                        if self.textures.chemin_variants.is_empty() {
+                            self.textures.chemin_src
+                        } else {
+                            let idx = self.chemin_choice[y][x]
+                                .min(self.textures.chemin_variants.len() - 1);
+                            self.textures.chemin_variants[idx]
+                        }
                     }
-                    TileType::Eau => {
-                        draw_texture_ex(
-                            &self.textures.map_texture,
-                            x_f,
-                            y_f,
-                            WHITE,
-                            DrawTextureParams {
-                                dest_size: Some(Vec2::new(TILE_SIZE, TILE_SIZE)),
-                                source: Some(self.textures.water_src),
-                                ..Default::default()
-                            },
-                        );
-                    }
-                }
+                    TileType::Eau => self.textures.water_src,
+                };
+                let dest_x = origin_x + x as f32 * TILE_SIZE;
+                let dest_y = origin_y + y as f32 * TILE_SIZE;
+                draw_texture_ex(
+                    &self.textures.map_texture,
+                    dest_x,
+                    dest_y,
+                    WHITE,
+                    DrawTextureParams {
+                        dest_size: Some(Vec2::splat(TILE_SIZE)),
+                        source: Some(source),
+                        ..Default::default()
+                    },
+                );
             }
         }
     }
 
-    fn draw_entities(&self, world: &World) {
-        for p in world.players() {
-            if p.est_vivant() {
-                let (x_f, y_f) = if self.moving {
-                    let from_x = self.move_from.x as f32;
-                    let from_y = self.move_from.y as f32;
-                    let to_x = self.move_to.x as f32;
-                    let to_y = self.move_to.y as f32;
-                    let interp_x = from_x + (to_x - from_x) * self.move_progress;
-                    let interp_y = from_y + (to_y - from_y) * self.move_progress;
-                    (interp_x * TILE_SIZE, interp_y * TILE_SIZE)
-                } else {
-                    let pos = p.position();
-                    (pos.x as f32 * TILE_SIZE, pos.y as f32 * TILE_SIZE)
-                };
-                let index = self.player_anim.current_frame_index();
-                let src = self.textures.char_frames[index];
-                draw_texture_ex(
-                    &self.textures.char_texture,
-                    x_f,
-                    y_f,
-                    WHITE,
-                    DrawTextureParams {
-                        dest_size: Some(Vec2::new(TILE_SIZE, TILE_SIZE)),
-                        source: Some(src),
-                        flip_x: false,
-                        ..Default::default()
-                    },
-                );
-
-            }
+    fn draw_player(&self, world: &World, origin_x: f32, origin_y: f32) {
+        if world.players().is_empty() {
+            return;
         }
-        for (i, e) in world.enemies().iter().enumerate() {
-            if e.est_vivant() {
-                let anim = &self.enemy_anim[i];
-                let (x_f, y_f) = if anim.moving {
-                    let from_x = anim.from.x as f32;
-                    let from_y = anim.from.y as f32;
-                    let to_x = anim.to.x as f32;
-                    let to_y = anim.to.y as f32;
-                    let interp_x = from_x + (to_x - from_x) * anim.progress;
-                    let interp_y = from_y + (to_y - from_y) * anim.progress;
-                    (interp_x * TILE_SIZE, interp_y * TILE_SIZE)
-                } else {
-                    let pos = e.position();
-                    (pos.x as f32 * TILE_SIZE, pos.y as f32 * TILE_SIZE)
-                };
-                let frame_index = self.enemy_anim[i].frame;
-                let src = self.textures.enemy_frames[frame_index];
-                draw_texture_ex(
-                    &self.textures.enemy_texture,
-                    x_f,
-                    y_f,
-                    WHITE,
-                    DrawTextureParams {
-                        dest_size: Some(Vec2::new(TILE_SIZE, TILE_SIZE)),
-                        source: Some(src),
-                        ..Default::default()
-                    },
-                );
+        let tile_pos = if self.moving {
+            let t = self.move_progress.clamp(0.0, 1.0);
+            let lerp_x =
+                self.move_from.x as f32 + (self.move_to.x as f32 - self.move_from.x as f32) * t;
+            let lerp_y =
+                self.move_from.y as f32 + (self.move_to.y as f32 - self.move_from.y as f32) * t;
+            (lerp_x, lerp_y)
+        } else {
+            let pos = world.players()[0].position();
+            (pos.x as f32, pos.y as f32)
+        };
+        let frame = self.player_anim.current_frame_index();
+        let frame = frame % self.textures.char_frames.len();
+        let src = self.textures.char_frames[frame];
+        let dest_x = origin_x + tile_pos.0 * TILE_SIZE;
+        let dest_y = origin_y + tile_pos.1 * TILE_SIZE - 6.0;
+        draw_texture_ex(
+            &self.textures.char_texture,
+            dest_x,
+            dest_y,
+            WHITE,
+            DrawTextureParams {
+                dest_size: Some(Vec2::new(TILE_SIZE, TILE_SIZE * 1.1)),
+                source: Some(src),
+                ..Default::default()
+            },
+        );
+    }
 
+    fn draw_enemies(&self, world: &World, origin_x: f32, origin_y: f32) {
+        for (idx, enemy) in world.enemies().iter().enumerate() {
+            if idx >= self.enemy_anim.len() || !enemy.est_vivant() {
+                continue;
             }
+            let anim = &self.enemy_anim[idx];
+            let tile_pos = if anim.moving {
+                let t = anim.progress.clamp(0.0, 1.0);
+                let lerp_x = anim.from.x as f32 + (anim.to.x as f32 - anim.from.x as f32) * t;
+                let lerp_y = anim.from.y as f32 + (anim.to.y as f32 - anim.from.y as f32) * t;
+                (lerp_x, lerp_y)
+            } else {
+                let pos = enemy.position();
+                (pos.x as f32, pos.y as f32)
+            };
+            let frame = anim.frame % self.textures.enemy_frames.len();
+            let src = self.textures.enemy_frames[frame];
+            let dest_x = origin_x + tile_pos.0 * TILE_SIZE;
+            let dest_y = origin_y + tile_pos.1 * TILE_SIZE - 6.0;
+            draw_texture_ex(
+                &self.textures.enemy_texture,
+                dest_x,
+                dest_y,
+                WHITE,
+                DrawTextureParams {
+                    dest_size: Some(Vec2::new(TILE_SIZE, TILE_SIZE * 1.05)),
+                    source: Some(src),
+                    ..Default::default()
+                },
+            );
         }
     }
 
     fn draw_messages(&self) {
-        let mut y = 24.0;
+        let mut y = 30.0;
         for msg in &self.messages {
-            draw_text(&msg.texte, 10.0, y, 20.0, DARKGRAY);
-            y += 22.0;
+            draw_text(&msg.texte, 20.0, y, 22.0, DARKGRAY);
+            y += 24.0;
         }
     }
 
-    fn collect_combat_keys(&self) -> Vec<KeyCode> {
-        let mut keys = Vec::new();
-        if is_key_pressed(KeyCode::A) {
-            keys.push(KeyCode::A);
-        }
-        if is_key_pressed(KeyCode::D) {
-            keys.push(KeyCode::D);
-        }
-        if is_key_pressed(KeyCode::F) {
-            keys.push(KeyCode::F);
-        }
-        keys
+    fn tile_walkable(&self, x: usize, y: usize) -> bool {
+        matches!(self.map_tiles[y][x], TileType::Herbe | TileType::Chemin)
     }
 }
 
-/// Génère la grille des tuiles (herbe ou chemin). Le chemin part de
-/// `(start_x, start_y)` et s'étend vers le haut puis vers la droite.
-fn generate_map_tiles(
-    width: usize,
-    height: usize,
-    start_x: usize,
-    start_y: usize,
-) -> Vec<Vec<TileType>> {
-    let mut tiles = vec![vec![TileType::Herbe; width]; height];
-    for y in 0..=start_y {
-        tiles[y][start_x] = TileType::Chemin;
-    }
-    for x in start_x..width {
-        tiles[start_y][x] = TileType::Chemin;
-    }
-    tiles
+fn choose_grass_variants(textures: &GameTextures, tiles: &[Vec<TileType>]) -> Vec<Vec<usize>> {
+    let mut rng = thread_rng();
+    (0..MAP_HEIGHT)
+        .map(|y| {
+            (0..MAP_WIDTH)
+                .map(|x| {
+                    if tiles[y][x] == TileType::Herbe {
+                        rng.gen_range(0..textures.grass_variants.len())
+                    } else {
+                        0
+                    }
+                })
+                .collect::<Vec<usize>>()
+        })
+        .collect()
 }
 
-/// Génère des ennemis jusqu'à `max_enemies` sur des cases d'herbe libres.
-fn spawn_random_enemies(world: &mut World, tiles: &Vec<Vec<TileType>>, max_enemies: usize) {
+fn choose_chemin_variants(textures: &GameTextures, tiles: &[Vec<TileType>]) -> Vec<Vec<usize>> {
+    if textures.chemin_variants.is_empty() {
+        return vec![vec![0; MAP_WIDTH]; MAP_HEIGHT];
+    }
+    let mut rng = thread_rng();
+    (0..MAP_HEIGHT)
+        .map(|y| {
+            (0..MAP_WIDTH)
+                .map(|x| {
+                    if tiles[y][x] == TileType::Chemin {
+                        rng.gen_range(0..textures.chemin_variants.len())
+                    } else {
+                        0
+                    }
+                })
+                .collect::<Vec<usize>>()
+        })
+        .collect()
+}
+
+fn spawn_random_enemies(world: &mut World, tiles: &[Vec<TileType>], max_enemies: usize) {
     let mut rng = thread_rng();
     let mut next_id = 0;
     while world.enemies.len() < max_enemies {
         let x = rng.gen_range(0..world.width);
         let y = rng.gen_range(0..world.height);
-        if tiles[y][x] == TileType::Herbe {
-            let tile_free = world
-                .players()
-                .iter()
-                .filter(|p| p.est_vivant())
-                .all(|p| {
-                    let pos = p.position();
-                    pos.x != x || pos.y != y
-                })
-                && world
-                    .enemies()
-                    .iter()
-                    .filter(|e| e.est_vivant())
-                    .all(|e| {
-                        let pos = e.position();
-                        pos.x != x || pos.y != y
-                    });
-            if tile_free {
-                world.add_enemy(Ennemi::nouveau(next_id, Position { x, y }));
-                next_id += 1;
-            }
+        if !matches!(tiles[y][x], TileType::Herbe | TileType::Chemin) {
+            continue;
+        }
+        let tile_free = world.players().iter().filter(|p| p.est_vivant()).all(|p| {
+            let pos = p.position();
+            pos.x != x || pos.y != y
+        }) && world.enemies().iter().filter(|e| e.est_vivant()).all(|e| {
+            let pos = e.position();
+            pos.x != x || pos.y != y
+        });
+        if tile_free {
+            world.add_enemy(Ennemi::nouveau(next_id, Position { x, y }));
+            next_id += 1;
         }
     }
+}
+
+fn start_enemy_thread(world: &Arc<Mutex<World>>) {
+    let thread_world = Arc::clone(world);
+    thread::spawn(move || {
+        let tick_ms = 400u64;
+        let dt = (tick_ms as f32) / 1000.0;
+        loop {
+            if let Ok(mut world) = thread_world.lock() {
+                world.wander_enemies(dt);
+            }
+            thread::sleep(Duration::from_millis(tick_ms));
+        }
+    });
+}
+
+fn load_world_tiles() -> Vec<Vec<TileType>> {
+    let base = Path::new("worlds");
+    let _ = fs::create_dir_all(base);
+    let mut files = match fs::read_dir(base) {
+        Ok(entries) => entries
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_type().map(|ft| ft.is_file()).unwrap_or(false))
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>(),
+        Err(_) => return default_map_tiles(),
+    };
+    files.sort();
+    for path in files {
+        if let Ok(tiles) = parse_world_file(&path) {
+            return tiles;
+        }
+    }
+    default_map_tiles()
+}
+
+fn parse_world_file(path: &Path) -> Result<Vec<Vec<TileType>>, String> {
+    let content =
+        fs::read_to_string(path).map_err(|e| format!("Impossible de lire {:?}: {}", path, e))?;
+    let mut rows = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let mut row = Vec::new();
+        for token in trimmed.split(|c: char| c.is_whitespace() || c == ',') {
+            if token.is_empty() {
+                continue;
+            }
+            row.push(parse_tile_value(token)?);
+        }
+        if !row.is_empty() {
+            rows.push(row);
+        }
+    }
+    if rows.len() != MAP_HEIGHT {
+        return Err(format!(
+            "Le fichier {:?} contient {} lignes au lieu de {}",
+            path,
+            rows.len(),
+            MAP_HEIGHT
+        ));
+    }
+    for (y, row) in rows.iter().enumerate() {
+        if row.len() != MAP_WIDTH {
+            return Err(format!(
+                "La ligne {} dans {:?} contient {} colonnes au lieu de {}",
+                y,
+                path,
+                row.len(),
+                MAP_WIDTH
+            ));
+        }
+    }
+    Ok(rows)
+}
+
+fn parse_tile_value(token: &str) -> Result<TileType, String> {
+    let value: i32 = token
+        .parse()
+        .map_err(|_| format!("Valeur de tuile invalide: {}", token))?;
+    match value {
+        -1 => Ok(TileType::Eau),
+        0 => Ok(TileType::Herbe),
+        1 | 2 => Ok(TileType::Chemin),
+        other => Err(format!("Code tuile inconnu: {}", other)),
+    }
+}
+
+fn default_map_tiles() -> Vec<Vec<TileType>> {
+    let mut tiles = vec![vec![TileType::Herbe; MAP_WIDTH]; MAP_HEIGHT];
+    for y in 0..=PLAYER_START_Y.min(MAP_HEIGHT - 1) {
+        tiles[y][PLAYER_START_X] = TileType::Chemin;
+    }
+    if PLAYER_START_Y < MAP_HEIGHT {
+        for x in PLAYER_START_X..MAP_WIDTH {
+            tiles[PLAYER_START_Y][x] = TileType::Chemin;
+        }
+    }
+    tiles
 }

@@ -38,7 +38,6 @@ impl Ennemi {
         }
     }
 
-
     pub fn random_dir<R: Rng>(&self, rng: &mut R) -> (isize, isize) {
         match rng.gen_range(0..4) {
             0 => (0, -1),

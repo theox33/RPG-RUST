@@ -1,6 +1,6 @@
-use crate::types::{Combatant, Position};
 use crate::ennemi::Ennemi;
 use crate::joueur::Joueur;
+use crate::types::{Combatant, Position};
 use ::rand::thread_rng;
 use std::collections::HashSet;
 
@@ -13,16 +13,16 @@ pub struct World {
 }
 
 impl World {
-        /// Retourne l'indice d'un ennemi vivant sur la case (x, y), ou None
-        pub fn find_enemy_on_tile(&self, x: usize, y: usize) -> Option<usize> {
-            self.enemies.iter().enumerate().find_map(|(ei, e)| {
-                if e.est_vivant() && e.position().x == x && e.position().y == y {
-                    Some(ei)
-                } else {
-                    None
-                }
-            })
-        }
+    /// Retourne l'indice d'un ennemi vivant sur la case (x, y), ou None
+    pub fn find_enemy_on_tile(&self, x: usize, y: usize) -> Option<usize> {
+        self.enemies.iter().enumerate().find_map(|(ei, e)| {
+            if e.est_vivant() && e.position().x == x && e.position().y == y {
+                Some(ei)
+            } else {
+                None
+            }
+        })
+    }
     pub fn new(width: usize, height: usize) -> Self {
         World {
             width,
@@ -46,21 +46,13 @@ impl World {
     }
 
     fn is_cell_free(&self, x: usize, y: usize) -> bool {
-        self.players
-            .iter()
-            .filter(|p| p.est_vivant())
-            .all(|p| {
-                let pos = p.position();
-                !(pos.x == x && pos.y == y)
-            })
-            && self
-                .enemies
-                .iter()
-                .filter(|e| e.est_vivant())
-                .all(|e| {
-                    let pos = e.position();
-                    !(pos.x == x && pos.y == y)
-                })
+        self.players.iter().filter(|p| p.est_vivant()).all(|p| {
+            let pos = p.position();
+            !(pos.x == x && pos.y == y)
+        }) && self.enemies.iter().filter(|e| e.est_vivant()).all(|e| {
+            let pos = e.position();
+            !(pos.x == x && pos.y == y)
+        })
     }
 
     pub fn move_player(&mut self, player_id: usize, dx: isize, dy: isize) -> bool {
@@ -73,7 +65,8 @@ impl World {
             let ny = current.y as isize + dy;
             if self.is_within(nx, ny) {
                 let (nxu, nyu) = (nx as usize, ny as usize);
-                let can_move = (nxu == current.x && nyu == current.y) || self.is_cell_free(nxu, nyu);
+                let can_move =
+                    (nxu == current.x && nyu == current.y) || self.is_cell_free(nxu, nyu);
                 if can_move {
                     if let Some(p) = self.players.get_mut(idx) {
                         let pos = p.position_mut();
@@ -163,7 +156,6 @@ impl World {
             }
         }
     }
-
 
     pub fn players(&self) -> &[Joueur] {
         &self.players

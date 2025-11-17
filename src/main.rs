@@ -1,7 +1,7 @@
-mod types;
-mod joueur;
 mod ennemi;
 mod game;
+mod joueur;
+mod types;
 mod world;
 
 use game::Game;
