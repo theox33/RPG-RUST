@@ -82,29 +82,18 @@ impl World {
 
     /// Met à jour les ennemis avec un déplacement aléatoire lent basé sur un timer par entité.
     /// Utilise `dt` (en secondes) comme intervalle écoulé depuis le dernier tick.
-    /// Évite les collisions avec les joueurs et entre ennemis.
+    /// Évite les collisions entre ennemis, mais leur permet d'atteindre la case du joueur.
     pub fn wander_enemies(&mut self, dt: f32) {
         if dt <= 0.0 || self.enemies_frozen {
             return;
         }
 
-        // Snapshot des positions des joueurs vivants
-        let players_snapshot: Vec<_> = self
-            .players
-            .iter()
-            .filter(|p| p.est_vivant())
-            .map(|p| (p.id(), p.position()))
-            .collect();
-
-        // Occupation initiale
-        let mut occupied: HashSet<(usize, usize)> = HashSet::new();
-        for (_, pos) in &players_snapshot {
-            occupied.insert((pos.x, pos.y));
-        }
+        // Occupation initiale : on évite les collisions entre ennemis, mais pas avec le joueur.
+        let mut enemy_occupied: HashSet<(usize, usize)> = HashSet::new();
         for e in &self.enemies {
             if e.est_vivant() {
                 let pos = e.position();
-                occupied.insert((pos.x, pos.y));
+                enemy_occupied.insert((pos.x, pos.y));
             }
         }
 
@@ -131,7 +120,7 @@ impl World {
                 let ny = current.y as isize + dy;
                 if nx >= 0 && ny >= 0 && nx < w && ny < h {
                     let (nxu, nyu) = (nx as usize, ny as usize);
-                    if !occupied.contains(&(nxu, nyu)) {
+                    if !enemy_occupied.contains(&(nxu, nyu)) {
                         moved_to = Some((nxu, nyu));
                         break;
                     }
@@ -139,8 +128,8 @@ impl World {
             }
 
             if let Some((nxu, nyu)) = moved_to {
-                occupied.remove(&(current.x, current.y));
-                occupied.insert((nxu, nyu));
+                enemy_occupied.remove(&(current.x, current.y));
+                enemy_occupied.insert((nxu, nyu));
                 new_positions[i] = Some(Position { x: nxu, y: nyu });
             }
         }

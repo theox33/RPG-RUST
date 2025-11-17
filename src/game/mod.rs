@@ -284,12 +284,15 @@ impl Game {
     }
 
     fn update_enemy_movement(&mut self, dt: f32) {
-        let positions = match self.world.lock() {
-            Ok(world) => world
-                .enemies()
-                .iter()
-                .map(|e| e.position())
-                .collect::<Vec<_>>(),
+        let (positions, player_pos) = match self.world.lock() {
+            Ok(world) => (
+                world
+                    .enemies()
+                    .iter()
+                    .map(|e| e.position())
+                    .collect::<Vec<_>>(),
+                world.players().get(0).map(|p| p.position()),
+            ),
             Err(_) => return,
         };
         self.enemy_anim.truncate(positions.len());
@@ -353,6 +356,18 @@ impl Game {
                 }
             }
         }
+
+        if matches!(self.state, GameState::Exploration) {
+            if let Some(player_pos) = player_pos {
+                if let Some((enemy_idx, _)) = positions
+                    .iter()
+                    .enumerate()
+                    .find(|(_, pos)| pos.x == player_pos.x && pos.y == player_pos.y)
+                {
+                    self.engage_combat_with_enemy(enemy_idx, "Un ennemi vous attaque !");
+                }
+            }
+        }
     }
 
     fn update_exploration(&mut self, dt: f32) {
@@ -410,17 +425,11 @@ impl Game {
             return;
         }
         if let Some(e_idx) = world.find_enemy_on_tile(nxu, nyu) {
-            self.messages.push(Message {
-                texte: String::from(
-                    "Vous tentez d'entrer sur la case d'un ennemi : combat engagé !",
-                ),
-                timer: 1.2,
-            });
-            world.enemies_frozen = true;
-            let player_speed = world.players()[0].vitesse();
-            let enemy_speed = world.enemies()[e_idx].vitesse();
-            let player_first = player_speed >= enemy_speed;
-            self.state = GameState::Combat(CombatState::with_initiative(0, e_idx, player_first));
+            drop(world);
+            self.engage_combat_with_enemy(
+                e_idx,
+                "Vous tentez d'entrer sur la case d'un ennemi : combat engagé !",
+            );
         } else if world.move_player(0, dx, dy) {
             let new_pos = world.players()[0].position();
             drop(world);
@@ -441,6 +450,28 @@ impl Game {
         self.player_anim.timer = 0.0;
         let nframes = 3;
         self.player_anim.frame_duration = self.move_time / nframes as f32;
+    }
+
+    fn engage_combat_with_enemy(&mut self, enemy_idx: usize, message: &str) {
+        if !matches!(self.state, GameState::Exploration) {
+            return;
+        }
+        let mut world = match self.world.lock() {
+            Ok(world) => world,
+            Err(_) => return,
+        };
+        if world.players().is_empty() || enemy_idx >= world.enemies().len() {
+            return;
+        }
+        self.messages.push(Message {
+            texte: message.to_string(),
+            timer: 1.2,
+        });
+        world.enemies_frozen = true;
+        let player_speed = world.players()[0].vitesse();
+        let enemy_speed = world.enemies()[enemy_idx].vitesse();
+        let player_first = player_speed >= enemy_speed;
+        self.state = GameState::Combat(CombatState::with_initiative(0, enemy_idx, player_first));
     }
 
     fn update_combat_state(&mut self) {
