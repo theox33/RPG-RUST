@@ -1,4 +1,5 @@
 pub mod combat;
+mod coffre;
 
 use crate::ennemi::Ennemi;
 use crate::joueur::Joueur;
@@ -7,7 +8,8 @@ use crate::world::World;
 use ::rand::{thread_rng, Rng};
 use combat::{CombatInput, CombatResolution, CombatResult, CombatState, CombatTransition};
 use macroquad::prelude::*;
-use std::collections::{HashMap, HashSet};
+use coffre::ChestSystem;
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -23,8 +25,6 @@ pub const MAX_ENEMIES: usize = 4;
 const HOUSE_TILE_WIDTH: f32 = 5.0;
 const HOUSE_TILE_HEIGHT: f32 = 4.0;
 const HOUSE_FIT_MARGIN: f32 = 0.98;
-const CHEST_FRAME_DURATION: f32 = 0.12;
-const CHEST_SCALE: f32 = 0.25;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum TileType {
@@ -141,37 +141,6 @@ struct EnemyAnim {
     frame_duration: f32,
 }
 
-#[derive(Clone)]
-struct ChestState {
-    position: Position,
-    opened: bool,
-    animating: bool,
-    anim_frame: usize,
-    anim_timer: f32,
-}
-
-impl ChestState {
-    fn new(position: Position) -> Self {
-        Self {
-            position,
-            opened: false,
-            animating: false,
-            anim_frame: 0,
-            anim_timer: 0.0,
-        }
-    }
-
-    fn current_frame(&self, max_frame: usize) -> usize {
-        if self.animating {
-            self.anim_frame.min(max_frame)
-        } else if self.opened {
-            max_frame
-        } else {
-            0
-        }
-    }
-}
-
 struct Message {
     texte: String,
     timer: f32,
@@ -189,10 +158,9 @@ pub struct Game {
     textures: GameTextures,
     current_world: WorldKind,
     enemy_cache: HashMap<WorldKind, Vec<Ennemi>>,
-    chest_cache: HashMap<WorldKind, Vec<ChestState>>,
     map_tiles: Vec<Vec<TileType>>,
     house_anchors: Vec<Position>,
-    chests: Vec<ChestState>,
+    chests: ChestSystem,
     player_anim: PlayerAnim,
     moving: bool,
     move_time: f32,
@@ -203,7 +171,6 @@ pub struct Game {
     chemin_choice: Vec<Vec<usize>>,
     enemy_anim: Vec<EnemyAnim>,
     enemy_prev_positions: Vec<Position>,
-    active_chest: Option<usize>,
 }
 
 impl Game {
@@ -259,17 +226,16 @@ impl Game {
 
         let chest_cols = 3;
         let chest_rows = 2;
-        let chest_cw = chest_texture.width() / chest_cols as f32;
-        let chest_ch = chest_texture.height() / chest_rows as f32;
+        let tex_w = chest_texture.width();
+        let tex_h = chest_texture.height();
         let mut chest_frames = Vec::new();
         for row in 0..chest_rows {
             for col in 0..chest_cols {
-                chest_frames.push(Rect::new(
-                    col as f32 * chest_cw,
-                    row as f32 * chest_ch,
-                    chest_cw,
-                    chest_ch,
-                ));
+                let x0 = tex_w * col as f32 / chest_cols as f32;
+                let x1 = tex_w * (col as f32 + 1.0) / chest_cols as f32;
+                let y0 = tex_h * row as f32 / chest_rows as f32;
+                let y1 = tex_h * (row as f32 + 1.0) / chest_rows as f32;
+                chest_frames.push(Rect::new(x0, y0, (x1 - x0).max(0.0), (y1 - y0).max(0.0)));
             }
         }
         let textures = GameTextures {
@@ -310,10 +276,9 @@ impl Game {
             textures,
             current_world: WorldKind::Plaine,
             enemy_cache: HashMap::new(),
-            chest_cache: HashMap::new(),
             map_tiles,
             house_anchors: Vec::new(),
-            chests: Vec::new(),
+            chests: ChestSystem::new(),
             player_anim: PlayerAnim::new(),
             moving: false,
             move_time: 0.3,
@@ -330,7 +295,6 @@ impl Game {
             chemin_choice: vec![vec![0; MAP_WIDTH]; MAP_HEIGHT],
             enemy_anim: Vec::new(),
             enemy_prev_positions: Vec::new(),
-            active_chest: None,
         };
 
         game.refresh_map_variants();
@@ -353,7 +317,7 @@ impl Game {
             self.handle_chest_ui_input();
         } else {
             self.update_combat_state();
-            self.active_chest = None;
+            self.chests.clear_active();
         }
         self.update_chest_animation(dt);
         self.render();
@@ -645,7 +609,7 @@ impl Game {
     fn render(&mut self) {
         let (origin_x, origin_y) = self.world_origin();
         self.draw_tiles(origin_x, origin_y);
-        self.draw_chests(origin_x, origin_y);
+        self.chests.draw(&self.textures, origin_x, origin_y);
         if matches!(self.current_world, WorldKind::Plaine) {
             self.draw_houses(origin_x, origin_y);
         }
@@ -657,7 +621,7 @@ impl Game {
             }
         }
         self.draw_messages();
-        self.draw_chest_prompt();
+        self.chests.draw_prompt();
     }
 
     fn world_origin(&self) -> (f32, f32) {
@@ -724,111 +688,38 @@ impl Game {
         }
     }
 
-    fn draw_chests(&self, origin_x: f32, origin_y: f32) {
-        if self.chests.is_empty() || self.textures.chest_frames.is_empty() {
-            return;
-        }
-        let max_frame = self.textures.chest_frames.len().saturating_sub(1);
-        for chest in &self.chests {
-            let frame_idx = chest.current_frame(max_frame);
-            let frame_idx = frame_idx.min(self.textures.chest_frames.len().saturating_sub(1));
-            let src = self.textures.chest_frames[frame_idx];
-            let width = src.w * CHEST_SCALE;
-            let height = src.h * CHEST_SCALE;
-            let tile_origin_x = origin_x + chest.position.x as f32 * TILE_SIZE;
-            let tile_origin_y = origin_y + chest.position.y as f32 * TILE_SIZE;
-            let dest_x = tile_origin_x + (TILE_SIZE - width) * 0.5;
-            let dest_y = tile_origin_y + TILE_SIZE - height;
-            draw_texture_ex(
-                &self.textures.chest_texture,
-                dest_x,
-                dest_y,
-                WHITE,
-                DrawTextureParams {
-                    dest_size: Some(Vec2::new(width, height)),
-                    source: Some(src),
-                    ..Default::default()
-                },
-            );
-        }
-    }
-
     fn update_chest_animation(&mut self, dt: f32) {
-        if dt <= 0.0 || self.chests.is_empty() || self.textures.chest_frames.is_empty() {
-            return;
-        }
-        let max_frame = self.textures.chest_frames.len().saturating_sub(1);
-        for chest in &mut self.chests {
-            if !chest.animating {
-                continue;
-            }
-            chest.anim_timer += dt;
-            while chest.anim_timer >= CHEST_FRAME_DURATION {
-                chest.anim_timer -= CHEST_FRAME_DURATION;
-                if chest.anim_frame < max_frame {
-                    chest.anim_frame += 1;
-                }
-                if chest.anim_frame >= max_frame {
-                    chest.animating = false;
-                    chest.opened = true;
-                    break;
-                }
-            }
-        }
+        self.chests
+            .update_animation(dt, self.textures.chest_frames.len());
     }
 
     fn update_chest_prompt(&mut self) {
         if !matches!(self.state, GameState::Exploration) {
-            self.active_chest = None;
+            self.chests.clear_active();
             return;
         }
         let player_pos = match self.world.lock() {
             Ok(world) => world.players().get(0).map(|p| p.position()),
             Err(_) => None,
         };
-        let Some(player_pos) = player_pos else {
-            self.active_chest = None;
-            return;
-        };
-        let next = self
-            .chests
-            .iter()
-            .enumerate()
-            .find(|(_, chest)| !chest.opened && !chest.animating && is_adjacent(player_pos, chest.position));
-        self.active_chest = next.map(|(idx, _)| idx);
+        self.chests.refresh_prompt(player_pos);
     }
 
     fn handle_chest_ui_input(&mut self) {
-        let Some(idx) = self.active_chest else {
-            return;
-        };
         if !matches!(self.state, GameState::Exploration) {
+            self.chests.clear_active();
             return;
         }
         if !is_mouse_button_pressed(MouseButton::Left) {
             return;
         }
-        let rect = self.chest_button_rect();
         let (mx, my) = mouse_position();
-        if rect.contains(Vec2::new(mx, my)) {
-            self.open_chest(idx);
-        }
-    }
-
-    fn open_chest(&mut self, idx: usize) {
-        if let Some(chest) = self.chests.get_mut(idx) {
-            if chest.opened || chest.animating {
-                return;
-            }
-            chest.animating = true;
-            chest.anim_frame = 0;
-            chest.anim_timer = 0.0;
+        if self.chests.handle_click(Vec2::new(mx, my)) {
             self.messages.push(Message {
                 texte: String::from("Vous ouvrez le coffre."),
                 timer: 1.2,
             });
         }
-        self.active_chest = None;
     }
 
     fn draw_maison_background(&self, origin_x: f32, origin_y: f32) {
@@ -920,27 +811,6 @@ impl Game {
         }
     }
 
-    fn draw_chest_prompt(&self) {
-        if self.active_chest.is_none() {
-            return;
-        }
-        let rect = self.chest_button_rect();
-        draw_rectangle(rect.x, rect.y, rect.w, rect.h, Color::new(0.15, 0.15, 0.2, 0.75));
-        draw_rectangle_lines(rect.x, rect.y, rect.w, rect.h, 2.0, WHITE);
-        let label = "Ouvrir le coffre";
-        let text_x = rect.x + 18.0;
-        let text_y = rect.y + rect.h * 0.65;
-        draw_text(label, text_x, text_y, 24.0, WHITE);
-    }
-
-    fn chest_button_rect(&self) -> Rect {
-        let width = 220.0;
-        let height = 44.0;
-        let x = 20.0;
-        let y = screen_height() - height - 20.0;
-        Rect::new(x, y, width, height)
-    }
-
     fn draw_houses(&self, origin_x: f32, origin_y: f32) {
         let max_width = TILE_SIZE * HOUSE_TILE_WIDTH;
         let max_height = TILE_SIZE * HOUSE_TILE_HEIGHT;
@@ -983,31 +853,8 @@ impl Game {
     }
 
     fn rebuild_chests_from_tiles(&mut self) {
-        let positions = detect_chest_positions(&self.map_tiles);
-        if positions.is_empty() {
-            self.chests.clear();
-            self.active_chest = None;
-            return;
-        }
-        let target_positions: HashSet<(usize, usize)> =
-            positions.iter().map(|pos| (pos.x, pos.y)).collect();
-        if let Some(cached) = self.chest_cache.get(&self.current_world).cloned() {
-            let mut kept: Vec<ChestState> = cached
-                .into_iter()
-                .filter(|chest| target_positions.contains(&(chest.position.x, chest.position.y)))
-                .collect();
-            let existing: HashSet<(usize, usize)> =
-                kept.iter().map(|c| (c.position.x, c.position.y)).collect();
-            for pos in positions {
-                if !existing.contains(&(pos.x, pos.y)) {
-                    kept.push(ChestState::new(pos));
-                }
-            }
-            self.chests = kept;
-        } else {
-            self.chests = positions.into_iter().map(ChestState::new).collect();
-        }
-        self.active_chest = None;
+        self.chests
+            .rebuild_from_tiles(&self.map_tiles, self.current_world);
     }
 
     fn sync_world_walkable_map(&self) {
@@ -1113,10 +960,7 @@ impl Game {
     }
 
     fn store_current_world_chests(&mut self) {
-        if !self.chests.is_empty() {
-            self.chest_cache
-                .insert(self.current_world, self.chests.clone());
-        }
+        self.chests.store_world_snapshot(self.current_world);
     }
 }
 
@@ -1267,24 +1111,6 @@ fn detect_house_anchors(tiles: &[Vec<TileType>]) -> Vec<Position> {
         }
     }
     anchors
-}
-
-fn detect_chest_positions(tiles: &[Vec<TileType>]) -> Vec<Position> {
-    let mut chests = Vec::new();
-    for y in 0..MAP_HEIGHT {
-        for x in 0..MAP_WIDTH {
-            if matches!(tiles[y][x], TileType::Coffre) {
-                chests.push(Position { x, y });
-            }
-        }
-    }
-    chests
-}
-
-fn is_adjacent(a: Position, b: Position) -> bool {
-    let dx = a.x as isize - b.x as isize;
-    let dy = a.y as isize - b.y as isize;
-    dx.abs() + dy.abs() == 1
 }
 
 fn default_map_tiles() -> Vec<Vec<TileType>> {
