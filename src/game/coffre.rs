@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 const CHEST_FRAME_DURATION: f32 = 0.12;
 const CHEST_SCALE: f32 = 0.25;
+const CHEST_FADE_DURATION: f32 = 0.8;
 const PROMPT_WIDTH: f32 = 220.0;
 const PROMPT_HEIGHT: f32 = 44.0;
 
@@ -15,6 +16,9 @@ pub struct ChestState {
     animating: bool,
     anim_frame: usize,
     anim_timer: f32,
+    fading: bool,
+    fade_timer: f32,
+    removed: bool,
 }
 
 impl ChestState {
@@ -25,6 +29,9 @@ impl ChestState {
             animating: false,
             anim_frame: 0,
             anim_timer: 0.0,
+            fading: false,
+            fade_timer: 0.0,
+            removed: false,
         }
     }
 
@@ -60,6 +67,9 @@ impl ChestSystem {
         }
         let max_frame = textures.chest_frames.len().saturating_sub(1);
         for chest in &self.chests {
+            if chest.removed {
+                continue;
+            }
             let frame_idx = chest
                 .current_frame(max_frame)
                 .min(textures.chest_frames.len().saturating_sub(1));
@@ -70,11 +80,16 @@ impl ChestSystem {
             let tile_origin_y = origin_y + chest.position.y as f32 * TILE_SIZE;
             let dest_x = tile_origin_x + (TILE_SIZE - width) * 0.5;
             let dest_y = tile_origin_y + TILE_SIZE - height;
+            let alpha = if chest.fading {
+                (1.0 - (chest.fade_timer / CHEST_FADE_DURATION)).clamp(0.0, 1.0)
+            } else {
+                1.0
+            };
             draw_texture_ex(
                 &textures.chest_texture,
                 dest_x,
                 dest_y,
-                WHITE,
+                Color::new(1.0, 1.0, 1.0, alpha),
                 DrawTextureParams {
                     dest_size: Some(Vec2::new(width, height)),
                     source: Some(src),
@@ -106,7 +121,7 @@ impl ChestSystem {
             .chests
             .iter()
             .enumerate()
-            .find(|(_, chest)| !chest.opened && !chest.animating && is_adjacent(player_pos, chest.position));
+            .find(|(_, chest)| !chest.opened && !chest.animating && !chest.removed && is_adjacent(player_pos, chest.position));
         self.active = next.map(|(idx, _)| idx);
     }
 
@@ -131,18 +146,37 @@ impl ChestSystem {
         let max_frame = frame_count.saturating_sub(1);
         for chest in &mut self.chests {
             if !chest.animating {
+                // Even if not animating, handle fade progression if active
+            }
+            if chest.removed {
                 continue;
             }
-            chest.anim_timer += dt;
-            while chest.anim_timer >= CHEST_FRAME_DURATION {
-                chest.anim_timer -= CHEST_FRAME_DURATION;
-                if chest.anim_frame < max_frame {
-                    chest.anim_frame += 1;
+
+            // Advance opening animation if playing
+            if chest.animating {
+                chest.anim_timer += dt;
+                while chest.anim_timer >= CHEST_FRAME_DURATION {
+                    chest.anim_timer -= CHEST_FRAME_DURATION;
+                    if chest.anim_frame < max_frame {
+                        chest.anim_frame += 1;
+                    }
+                    if chest.anim_frame >= max_frame {
+                        chest.animating = false;
+                        chest.opened = true;
+                        // start fade-out immediately after fully opened
+                        chest.fading = true;
+                        chest.fade_timer = 0.0;
+                        break;
+                    }
                 }
-                if chest.anim_frame >= max_frame {
-                    chest.animating = false;
-                    chest.opened = true;
-                    break;
+            }
+
+            // If fading, advance fade timer and mark removed when done
+            if chest.fading {
+                chest.fade_timer += dt;
+                if chest.fade_timer >= CHEST_FADE_DURATION {
+                    chest.fading = false;
+                    chest.removed = true;
                 }
             }
         }
