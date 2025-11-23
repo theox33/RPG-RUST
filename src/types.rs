@@ -1,3 +1,4 @@
+use rand::Rng;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Position {
     pub x: usize,
@@ -50,7 +51,10 @@ pub trait Combatant {
     }
 
     fn attaque(&self) -> u32 {
-        self.stats().attaque
+        let base = self.stats().attaque as i32;
+        let mut rng = rand::thread_rng();
+        let delta = rng.gen_range(-5..=5);
+        (base + delta).max(1) as u32
     }
 
     fn vitesse(&self) -> u32 {
