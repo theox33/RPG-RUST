@@ -11,7 +11,6 @@ pub struct HealthBar {
 
 #[derive(Clone, Copy)]
 pub enum HealthBarAnchor {
-    TopLeft,
     TopRight,
 }
 
@@ -28,7 +27,6 @@ impl HealthBar {
 
     pub fn draw(&self, stats: &Stats) {
         let (x, y) = match self.anchor {
-            HealthBarAnchor::TopLeft => (self.margin, self.margin),
             HealthBarAnchor::TopRight => (screen_width() - self.width - self.margin, self.margin),
         };
         let bg = Color::new(0.1, 0.1, 0.1, 0.75);
