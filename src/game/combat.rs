@@ -1,4 +1,23 @@
-use macroquad::prelude::{draw_text, draw_rectangle, DARKGRAY, LIGHTGRAY};
+#[derive(Debug)]
+pub struct DamagePopup {
+    value: i32,
+    timer: f32,
+    color: Color,
+    x: f32,
+    y: f32,
+}
+use macroquad::prelude::{draw_text, draw_rectangle, DARKGRAY, LIGHTGRAY, RED, GREEN, Color};
+// ...existing code...
+
+impl CombatState {
+    pub fn damage_popups(&self) -> &Vec<DamagePopup> {
+        &self._damage_popups
+    }
+    pub fn damage_popups_mut(&mut self) -> &mut Vec<DamagePopup> {
+        &mut self._damage_popups
+    }
+}
+// ...existing code...
 use crate::types::Combatant;
 use crate::world::World;
 use macroquad::prelude::{KeyCode, Rect, Vec2};
@@ -32,6 +51,7 @@ pub struct CombatState {
     enemy_defending: bool,
     player_turn: bool,
     boutons: CombatButtons,
+    _damage_popups: Vec<DamagePopup>,
 }
 
 pub struct CombatInput {
@@ -66,6 +86,7 @@ impl CombatState {
             enemy_defending: false,
             player_turn: true,
             boutons: CombatButtons::default(),
+            _damage_popups: Vec::new(),
         }
     }
 
@@ -80,6 +101,12 @@ impl CombatState {
     }
 
     pub fn update(&mut self, world: &mut World, input: &CombatInput, origin_x: f32, origin_y: f32) -> CombatResolution {
+                // Nettoyage des popups
+                self._damage_popups.retain(|p| p.timer > 0.0);
+                for popup in &mut self._damage_popups {
+                    popup.timer -= 1.0 / 60.0;
+                    popup.y -= 0.5; // effet flottant
+                }
         self.update_buttons(input.tile_size, input.world_height, origin_x, origin_y);
         let mut messages = Vec::new();
 
@@ -105,6 +132,16 @@ impl CombatState {
                             };
                             if let Some(enemy) = world.enemies_mut().get_mut(self.enemy_idx) {
                                 enemy.inflige_degats(damage);
+                                // Popup dégâts infligés à l'ennemi (vert)
+                                let ex = origin_x + enemy.position().x as f32 * input.tile_size + input.tile_size * 0.5;
+                                let ey = origin_y + enemy.position().y as f32 * input.tile_size - 12.0;
+                                self._damage_popups.push(DamagePopup {
+                                    value: damage as i32,
+                                    timer: 0.8,
+                                    color: GREEN,
+                                    x: ex,
+                                    y: ey,
+                                });
                             }
                             self.enemy_defending = false;
                             self.player_turn = false;
@@ -202,6 +239,16 @@ impl CombatState {
             };
             if let Some(player) = world.players_mut().get_mut(self.player_idx) {
                 player.inflige_degats(damage);
+                // Popup dégâts subis par le joueur (rouge)
+                let px = origin_x + player.position().x as f32 * input.tile_size + input.tile_size * 0.5;
+                let py = origin_y + player.position().y as f32 * input.tile_size - 12.0;
+                self._damage_popups.push(DamagePopup {
+                    value: -(damage as i32),
+                    timer: 0.8,
+                    color: RED,
+                    x: px,
+                    y: py,
+                });
             }
             self.player_defending = false;
             self.player_turn = true;
@@ -257,6 +304,15 @@ impl CombatState {
     }
 
     pub fn draw_ui(&self, world: &World, tile_size: f32, origin_x: f32, origin_y: f32) {
+                // Affichage des popups de dégâts
+                for popup in &self._damage_popups {
+                    let txt = if popup.value > 0 {
+                        format!("+{}", popup.value)
+                    } else {
+                        format!("{}", popup.value)
+                    };
+                    draw_text(&txt, popup.x - 12.0, popup.y, 22.0, popup.color);
+                }
         let p = &world.players()[self.player_idx];
         let e = &world.enemies()[self.enemy_idx];
         let status = format!("Joueur PV: {}   Ennemi PV: {}", p.stats().vie, e.stats().vie);
