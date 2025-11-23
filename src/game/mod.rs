@@ -754,6 +754,22 @@ impl Game {
                 GameState::Combat(state) => {
                     self.draw_player(&world, origin_x, origin_y);
                     self.draw_enemies(&world, origin_x, origin_y);
+                    // Barre de vie au-dessus de l'ennemi courant
+                    let enemy = &world.enemies()[state.enemy_index()];
+                    let ex = origin_x + enemy.position().x as f32 * TILE_SIZE;
+                    let ey = origin_y + enemy.position().y as f32 * TILE_SIZE;
+                    let bar_w = 48.0;
+                    let bar_h = 8.0;
+                    let bar_x = ex + (TILE_SIZE - bar_w) * 0.5;
+                    let bar_y = ey - bar_h - 6.0;
+                    // Vie max de l'ennemi = 100
+                    let max_vie = 100;
+                    let ratio = (enemy.stats().vie as f32 / max_vie as f32).clamp(0.0, 1.0);
+                    let filled = bar_w * ratio;
+                    let bg = Color::new(0.1, 0.1, 0.1, 0.85);
+                    draw_rectangle(bar_x, bar_y, bar_w, bar_h, bg);
+                    draw_rectangle_lines(bar_x, bar_y, bar_w, bar_h, 1.5, WHITE);
+                    draw_rectangle(bar_x, bar_y, filled, bar_h, RED);
                     state.draw_ui(&world, TILE_SIZE, origin_x, origin_y);
                 }
                 _ => {
