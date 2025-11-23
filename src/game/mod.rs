@@ -891,7 +891,15 @@ impl Game {
                         .get(0)
                         .copied()
                         .unwrap_or(self.textures.chemin_src),
-                    TileType::Portal | TileType::SpiralPortal | TileType::CollisionInvisible | TileType::Coffre => {
+                    TileType::Portal | TileType::SpiralPortal => {
+                        // Affiche comme un chemin (variation)
+                        if !self.textures.chemin_variants.is_empty() {
+                            self.textures.chemin_variants[0]
+                        } else {
+                            self.textures.chemin_src
+                        }
+                    }
+                    TileType::CollisionInvisible | TileType::Coffre => {
                         // Texture neutre ou rien
                         Rect::new(0.0, 0.0, 0.0, 0.0)
                     },
@@ -1226,10 +1234,27 @@ impl Game {
         self.rebuild_chests_from_tiles();
         self.sync_world_walkable_map();
         self.respawn_enemies_for_current_world();
-        let spawn = find_tile_position(&self.map_tiles, spawn_tile).unwrap_or(Position {
+        let mut spawn = find_tile_position(&self.map_tiles, spawn_tile).unwrap_or(Position {
             x: PLAYER_START_X,
             y: PLAYER_START_Y,
         });
+        // Si transition plaine <-> spirale, garder y et forcer x
+        if let Ok(world) = self.world.lock() {
+            if let Some(player) = world.players().get(0) {
+                let y = player.position().y;
+                match (self.current_world, target) {
+                    (WorldKind::Plaine, WorldKind::Spirale) => {
+                        spawn.x = 0;
+                        spawn.y = y;
+                    }
+                    (WorldKind::Spirale, WorldKind::Plaine) => {
+                        spawn.x = MAP_WIDTH - 1;
+                        spawn.y = y;
+                    }
+                    _ => {}
+                }
+            }
+        }
         self.move_player_to(spawn);
         true
     }
