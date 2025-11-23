@@ -263,15 +263,57 @@ impl Game {
         }
 
         fn restart_game(&mut self) {
-            // Remet le joueur à son état initial
-            if let Ok(mut world) = self.world.lock() {
-                if let Some(player) = world.players_mut().get_mut(0) {
-                    player.stats_mut().vie = PLAYER_BASE_STATS.vie;
-                    player.position_mut().x = PLAYER_START_X;
-                    player.position_mut().y = PLAYER_START_Y;
-                }
-                // TODO: reset ennemis, coffres, etc. si besoin
+            // Recharger la map et ses variantes
+            let mut map_tiles = load_tiles_for_world(WorldKind::Plaine);
+            if map_tiles.len() != MAP_HEIGHT || map_tiles[0].len() != MAP_WIDTH {
+                map_tiles = default_map_tiles();
             }
+            self.map_tiles = map_tiles;
+            self.current_world = WorldKind::Plaine;
+            self.refresh_map_variants();
+            self.rebuild_chests_from_tiles();
+            self.sync_world_walkable_map();
+
+            // Réinitialiser le joueur
+            if let Ok(mut world) = self.world.lock() {
+                world.players.clear();
+                world.add_player(Joueur::nouveau(
+                    0,
+                    Position {
+                        x: PLAYER_START_X,
+                        y: PLAYER_START_Y,
+                    },
+                ));
+                // Réinitialiser les ennemis
+                world.enemies.clear();
+                spawn_random_enemies(&mut world, &self.map_tiles, enemy_cap(self.current_world));
+                world.enemies_frozen = false;
+            }
+
+            // Réinitialiser l’animation du joueur
+            self.player_anim = PlayerAnim::new();
+            self.moving = false;
+            self.move_progress = 0.0;
+            self.move_from = Position {
+                x: PLAYER_START_X,
+                y: PLAYER_START_Y,
+            };
+            self.move_to = Position {
+                x: PLAYER_START_X,
+                y: PLAYER_START_Y,
+            };
+
+            // Réinitialiser l’animation des ennemis
+            let mut positions = Vec::new();
+            if let Ok(world) = self.world.lock() {
+                positions = world.enemies().iter().map(|e| e.position()).collect();
+            }
+            self.rebuild_enemy_animation_state(positions);
+
+            // Réinitialiser les coffres
+            self.chests = ChestSystem::new();
+            self.rebuild_chests_from_tiles();
+
             self.state = GameState::Exploration;
             self.messages.clear();
         }
