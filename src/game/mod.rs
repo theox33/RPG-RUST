@@ -36,6 +36,7 @@ pub enum TileType {
     Maison,
     Portal,
     SpiralPortal,
+    SpiralPortal2,
     CollisionInvisible,
     Coffre,
 }
@@ -45,6 +46,7 @@ enum WorldKind {
     Plaine,
     Maison,
     Spirale,
+    Spirale2,
 }
 
 impl WorldKind {
@@ -53,6 +55,7 @@ impl WorldKind {
             WorldKind::Plaine => "plaine.map",
             WorldKind::Maison => "maison.map",
             WorldKind::Spirale => "spirale.map",
+            WorldKind::Spirale2 => "spirale2.map",
         }
     }
 
@@ -61,6 +64,7 @@ impl WorldKind {
             WorldKind::Plaine => "Vous retournez dehors.",
             WorldKind::Maison => "Vous entrez dans la maison.",
             WorldKind::Spirale => "Vous sentez une étrange énergie en spirale...",
+            WorldKind::Spirale2 => "Un vortex de puissance s'ouvre devant vous...",
         }
     }
 }
@@ -290,7 +294,12 @@ impl Game {
                 ));
                 // Réinitialiser les ennemis
                 world.enemies.clear();
-                spawn_random_enemies(&mut world, &self.map_tiles, enemy_cap(self.current_world));
+                spawn_random_enemies(
+                    &mut world,
+                    &self.map_tiles,
+                    enemy_cap(self.current_world),
+                    self.current_world,
+                );
                 world.enemies_frozen = false;
             }
 
@@ -667,6 +676,10 @@ impl Game {
                     self.trigger_spiral_transition();
                     return;
                 }
+                TileType::SpiralPortal2 => {
+                    self.trigger_spiral2_transition();
+                    return;
+                }
                 _ => {}
             }
         }
@@ -891,7 +904,7 @@ impl Game {
                         .get(0)
                         .copied()
                         .unwrap_or(self.textures.chemin_src),
-                    TileType::Portal | TileType::SpiralPortal => {
+                    TileType::Portal | TileType::SpiralPortal | TileType::SpiralPortal2 => {
                         // Affiche comme un chemin (variation)
                         if !self.textures.chemin_variants.is_empty() {
                             self.textures.chemin_variants[0]
@@ -1109,7 +1122,11 @@ impl Game {
     fn tile_walkable(&self, x: usize, y: usize) -> bool {
         matches!(
             self.map_tiles[y][x],
-            TileType::Herbe | TileType::Chemin | TileType::Portal | TileType::SpiralPortal
+            TileType::Herbe
+                | TileType::Chemin
+                | TileType::Portal
+                | TileType::SpiralPortal
+                | TileType::SpiralPortal2
         ) && !matches!(self.map_tiles[y][x], TileType::CollisionInvisible)
     }
 
@@ -1140,7 +1157,12 @@ impl Game {
             } else {
                 let cap = enemy_cap(self.current_world);
                 if cap > 0 {
-                    spawn_random_enemies(&mut world, &self.map_tiles, cap);
+                    spawn_random_enemies(
+                        &mut world,
+                        &self.map_tiles,
+                        cap,
+                        self.current_world,
+                    );
                 }
                 snapshot = world
                     .enemies()
@@ -1221,7 +1243,23 @@ impl Game {
         }
     }
 
+    fn trigger_spiral2_transition(&mut self) {
+        let target = match self.current_world {
+            WorldKind::Plaine => WorldKind::Spirale2,
+            WorldKind::Spirale2 => WorldKind::Plaine,
+            _ => return,
+        };
+        if self.switch_to_world(target, TileType::SpiralPortal2) {
+            self.messages.push(Message {
+                texte: target.entry_message().to_string(),
+                timer: 1.2,
+                centered: false,
+            });
+        }
+    }
+
     fn switch_to_world(&mut self, target: WorldKind, spawn_tile: TileType) -> bool {
+        let previous_world = self.current_world;
         self.store_current_world_enemies();
         self.store_current_world_chests();
         let mut map_tiles = load_tiles_for_world(target);
@@ -1242,13 +1280,21 @@ impl Game {
         if let Ok(world) = self.world.lock() {
             if let Some(player) = world.players().get(0) {
                 let y = player.position().y;
-                match (self.current_world, target) {
+                match (previous_world, target) {
                     (WorldKind::Plaine, WorldKind::Spirale) => {
                         spawn.x = 0;
                         spawn.y = y;
                     }
                     (WorldKind::Spirale, WorldKind::Plaine) => {
                         spawn.x = MAP_WIDTH - 1;
+                        spawn.y = y;
+                    }
+                    (WorldKind::Plaine, WorldKind::Spirale2) => {
+                        spawn.x = MAP_WIDTH - 1;
+                        spawn.y = y;
+                    }
+                    (WorldKind::Spirale2, WorldKind::Plaine) => {
+                        spawn.x = 0;
                         spawn.y = y;
                     }
                     _ => {}
@@ -1321,9 +1367,15 @@ fn choose_chemin_variants(textures: &GameTextures, tiles: &[Vec<TileType>]) -> V
         .collect()
 }
 
-fn spawn_random_enemies(world: &mut World, tiles: &[Vec<TileType>], max_enemies: usize) {
+fn spawn_random_enemies(
+    world: &mut World,
+    tiles: &[Vec<TileType>],
+    max_enemies: usize,
+    world_kind: WorldKind,
+) {
     let mut rng = thread_rng();
     let mut next_id = 0;
+    let is_spirale2 = matches!(world_kind, WorldKind::Spirale2);
     while world.enemies.len() < max_enemies {
         let x = rng.gen_range(0..world.width);
         let y = rng.gen_range(0..world.height);
@@ -1338,7 +1390,12 @@ fn spawn_random_enemies(world: &mut World, tiles: &[Vec<TileType>], max_enemies:
             pos.x != x || pos.y != y
         });
         if tile_free {
-            world.add_enemy(Ennemi::nouveau(next_id, Position { x, y }));
+            let mut ennemi = Ennemi::nouveau(next_id, Position { x, y });
+            if is_spirale2 {
+                let stats = ennemi.stats_mut();
+                stats.attaque *= 2;
+            }
+            world.add_enemy(ennemi);
             next_id += 1;
         }
     }
@@ -1413,6 +1470,7 @@ fn parse_tile_value(token: &str) -> Result<TileType, String> {
         1 | 2 => Ok(TileType::Chemin),
         3 => Ok(TileType::Portal),
         4 => Ok(TileType::SpiralPortal),
+        5 => Ok(TileType::SpiralPortal2),
         other => Err(format!("Code tuile inconnu: {}", other)),
     }
 }
@@ -1477,7 +1535,7 @@ fn build_walkable_map(tiles: &[Vec<TileType>]) -> Vec<Vec<bool>> {
         .iter()
         .map(|row| {
             row.iter()
-                .map(|tile| matches!(tile, TileType::Herbe | TileType::Chemin | TileType::Portal | TileType::SpiralPortal) && !matches!(tile, TileType::CollisionInvisible))
+                .map(|tile| matches!(tile, TileType::Herbe | TileType::Chemin | TileType::Portal | TileType::SpiralPortal | TileType::SpiralPortal2) && !matches!(tile, TileType::CollisionInvisible))
                 .collect::<Vec<bool>>()
         })
         .collect()
@@ -1499,5 +1557,6 @@ fn enemy_cap(kind: WorldKind) -> usize {
         WorldKind::Plaine => MAX_ENEMIES,
         WorldKind::Maison => 0,
         WorldKind::Spirale => 5,
+        WorldKind::Spirale2 => 5,
     }
 }
