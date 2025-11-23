@@ -1,3 +1,4 @@
+use rand::Rng;
 #[derive(Debug)]
 pub struct DamagePopup {
     value: i32,
@@ -9,14 +10,6 @@ pub struct DamagePopup {
 use macroquad::prelude::{draw_text, draw_rectangle, DARKGRAY, LIGHTGRAY, RED, GREEN, Color};
 // ...existing code...
 
-impl CombatState {
-    pub fn damage_popups(&self) -> &Vec<DamagePopup> {
-        &self._damage_popups
-    }
-    pub fn damage_popups_mut(&mut self) -> &mut Vec<DamagePopup> {
-        &mut self._damage_popups
-    }
-}
 // ...existing code...
 use crate::types::Combatant;
 use crate::world::World;
@@ -52,6 +45,8 @@ pub struct CombatState {
     player_turn: bool,
     boutons: CombatButtons,
     _damage_popups: Vec<DamagePopup>,
+    pending_result: Option<CombatResult>,
+    result_delay: f32,
 }
 
 pub struct CombatInput {
@@ -87,6 +82,8 @@ impl CombatState {
             player_turn: true,
             boutons: CombatButtons::default(),
             _damage_popups: Vec::new(),
+            pending_result: None,
+            result_delay: 0.0,
         }
     }
 
@@ -106,6 +103,21 @@ impl CombatState {
                 for popup in &mut self._damage_popups {
                     popup.timer -= 1.0 / 60.0;
                     popup.y -= 0.5; // effet flottant
+                }
+
+                if let Some(result) = self.pending_result.clone() {
+                    if self.result_delay > 0.0 {
+                        self.result_delay -= 1.0 / 60.0;
+                        return CombatResolution {
+                            messages: Vec::new(),
+                            transition: CombatTransition::Continue,
+                        };
+                    }
+                    self.pending_result = None;
+                    return CombatResolution {
+                        messages: Vec::new(),
+                        transition: CombatTransition::Terminer(result),
+                    };
                 }
         self.update_buttons(input.tile_size, input.world_height, origin_x, origin_y);
         let mut messages = Vec::new();
@@ -198,15 +210,34 @@ impl CombatState {
             let result = match (player_alive, enemy_alive) {
                 (true, false) => {
                     if let Some(player) = world.players_mut().get_mut(self.player_idx) {
-                        if let Some(gain) = player.gain_vie_if_lucky() {
-                            messages.push(CombatMessage {
-                                texte: format!(
-                                    "Vous récupérez {} PV en fouillant l'ennemi vaincu.",
-                                    gain
-                                ),
-                                duree: 1.6,
-                            });
-                        }
+                        let mut rng = rand::thread_rng();
+                        let gain = rng.gen_range(10..=40);
+                        let pos = player.position();
+                        let stats = player.stats_mut();
+                        stats.vie = stats
+                            .vie
+                            .saturating_add(gain)
+                            .min(crate::types::PLAYER_BASE_STATS.vie);
+                        messages.push(CombatMessage {
+                            texte: format!(
+                                "Vous récupérez {} PV en fouillant l'ennemi vaincu.",
+                                gain
+                            ),
+                            duree: 1.6,
+                        });
+                        // Popup rose pour gain de vie
+                        let px = origin_x + pos.x as f32 * input.tile_size + input.tile_size * 0.5;
+                        let py = origin_y + pos.y as f32 * input.tile_size - 12.0;
+                        let rose = Color::new(1.0, 0.4, 0.7, 1.0);
+                        self._damage_popups.push(DamagePopup {
+                            value: gain as i32,
+                            timer: 1.0,
+                            color: rose,
+                            x: px,
+                            y: py,
+                        });
+                        self.pending_result = Some(CombatResult::JoueurVainqueur);
+                        self.result_delay = 0.8;
                     }
                     CombatResult::JoueurVainqueur
                 }
@@ -224,6 +255,12 @@ impl CombatState {
                 texte: texte.clone(),
                 duree: 2.0,
             });
+            if matches!(result, CombatResult::JoueurVainqueur) {
+                return CombatResolution {
+                    messages,
+                    transition: CombatTransition::Continue,
+                };
+            }
             return CombatResolution {
                 messages,
                 transition: CombatTransition::Terminer(result),
