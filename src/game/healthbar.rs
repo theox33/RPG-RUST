@@ -11,7 +11,7 @@ pub struct HealthBar {
 
 #[derive(Clone, Copy)]
 pub enum HealthBarAnchor {
-    TopRight,
+    TopLeft,
 }
 
 impl HealthBar {
@@ -25,9 +25,9 @@ impl HealthBar {
         }
     }
 
-    pub fn draw(&self, stats: &Stats) {
+    pub fn draw_at(&self, stats: &Stats, origin_x: f32, origin_y: f32) {
         let (x, y) = match self.anchor {
-            HealthBarAnchor::TopRight => (screen_width() - self.width - self.margin, self.margin),
+            HealthBarAnchor::TopLeft => (origin_x + self.margin, origin_y + self.margin),
         };
         let bg = Color::new(0.1, 0.1, 0.1, 0.75);
         draw_rectangle(x, y, self.width, self.height, bg);

@@ -1,3 +1,4 @@
+use macroquad::prelude::{draw_text, draw_rectangle, DARKGRAY, LIGHTGRAY};
 use crate::types::Combatant;
 use crate::world::World;
 use macroquad::prelude::{KeyCode, Rect, Vec2};
@@ -78,8 +79,8 @@ impl CombatState {
         self.enemy_idx
     }
 
-    pub fn update(&mut self, world: &mut World, input: &CombatInput) -> CombatResolution {
-        self.update_buttons(input.tile_size, input.world_height);
+    pub fn update(&mut self, world: &mut World, input: &CombatInput, origin_x: f32, origin_y: f32) -> CombatResolution {
+        self.update_buttons(input.tile_size, input.world_height, origin_x, origin_y);
         let mut messages = Vec::new();
 
         // Vérifier que les indices restent valides
@@ -255,61 +256,34 @@ impl CombatState {
         }
     }
 
-    pub fn draw_ui(&self, world: &World, tile_size: f32) {
+    pub fn draw_ui(&self, world: &World, tile_size: f32, origin_x: f32, origin_y: f32) {
         let p = &world.players()[self.player_idx];
         let e = &world.enemies()[self.enemy_idx];
-        let status = format!(
-            "Joueur HP: {}   Ennemi HP: {}",
-            p.stats().vie,
-            e.stats().vie
-        );
-        let base_y = (world.height as f32) * tile_size + 20.0;
-        macroquad::prelude::draw_text(&status, 10.0, base_y, 20.0, macroquad::prelude::DARKGRAY);
+        let status = format!("Joueur PV: {}   Ennemi PV: {}", p.stats().vie, e.stats().vie);
+        let margin = 16.0;
+        let btn_w = 160.0;
+        let btn_h = 36.0;
+        let spacing = 12.0;
+        let base_x = origin_x + margin;
+        // Position sous la matrice graphique
+        let base_y = origin_y + world.height as f32 * tile_size + margin;
 
-        let buttons = self.boutons;
-        macroquad::prelude::draw_rectangle(
-            buttons.attaquer.x,
-            buttons.attaquer.y,
-            buttons.attaquer.w,
-            buttons.attaquer.h,
-            macroquad::prelude::LIGHTGRAY,
-        );
-        macroquad::prelude::draw_rectangle(
-            buttons.defendre.x,
-            buttons.defendre.y,
-            buttons.defendre.w,
-            buttons.defendre.h,
-            macroquad::prelude::LIGHTGRAY,
-        );
-        macroquad::prelude::draw_rectangle(
-            buttons.fuir.x,
-            buttons.fuir.y,
-            buttons.fuir.w,
-            buttons.fuir.h,
-            macroquad::prelude::LIGHTGRAY,
-        );
+        // Affichage PV
+        draw_text(&status, base_x, base_y + 8.0, 22.0, DARKGRAY);
 
-        macroquad::prelude::draw_text(
-            "Attaquer",
-            buttons.attaquer.x + 12.0,
-            buttons.attaquer.y + 24.0,
-            20.0,
-            macroquad::prelude::DARKGRAY,
-        );
-        macroquad::prelude::draw_text(
-            "Défendre",
-            buttons.defendre.x + 12.0,
-            buttons.defendre.y + 24.0,
-            20.0,
-            macroquad::prelude::DARKGRAY,
-        );
-        macroquad::prelude::draw_text(
-            "Fuir",
-            buttons.fuir.x + 12.0,
-            buttons.fuir.y + 24.0,
-            20.0,
-            macroquad::prelude::DARKGRAY,
-        );
+        // Boutons
+        let btn_y = base_y + 36.0;
+        let btn1_x = base_x;
+        let btn2_x = base_x + btn_w + spacing;
+        let btn3_x = base_x + 2.0 * (btn_w + spacing);
+
+        draw_rectangle(btn1_x, btn_y, btn_w, btn_h, LIGHTGRAY);
+        draw_rectangle(btn2_x, btn_y, btn_w, btn_h, LIGHTGRAY);
+        draw_rectangle(btn3_x, btn_y, btn_w, btn_h, LIGHTGRAY);
+
+        draw_text("Attaquer", btn1_x + 18.0, btn_y + 24.0, 20.0, DARKGRAY);
+        draw_text("Défendre", btn2_x + 18.0, btn_y + 24.0, 20.0, DARKGRAY);
+        draw_text("Fuir", btn3_x + 18.0, btn_y + 24.0, 20.0, DARKGRAY);
     }
 
     fn extract_player_action(&self, input: &CombatInput) -> Option<PlayerAction> {
@@ -336,17 +310,18 @@ impl CombatState {
         None
     }
 
-    fn update_buttons(&mut self, tile_size: f32, world_height: usize) {
-        let base_y = world_height as f32 * tile_size + 40.0;
+    fn update_buttons(&mut self, tile_size: f32, world_height: usize, origin_x: f32, origin_y: f32) {
+        let margin = 16.0;
         let btn_w = 160.0;
         let btn_h = 36.0;
         let spacing = 12.0;
-        let bx = 10.0;
+        let base_x = origin_x + margin;
+        let base_y = origin_y + world_height as f32 * tile_size + margin + 36.0;
 
         self.boutons = CombatButtons {
-            attaquer: Rect::new(bx, base_y, btn_w, btn_h),
-            defendre: Rect::new(bx + (btn_w + spacing), base_y, btn_w, btn_h),
-            fuir: Rect::new(bx + 2.0 * (btn_w + spacing), base_y, btn_w, btn_h),
+            attaquer: Rect::new(base_x, base_y, btn_w, btn_h),
+            defendre: Rect::new(base_x + (btn_w + spacing), base_y, btn_w, btn_h),
+            fuir: Rect::new(base_x + 2.0 * (btn_w + spacing), base_y, btn_w, btn_h),
         };
     }
 }

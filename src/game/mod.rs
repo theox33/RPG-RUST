@@ -299,7 +299,7 @@ impl Game {
             chemin_choice: vec![vec![0; MAP_WIDTH]; MAP_HEIGHT],
             enemy_anim: Vec::new(),
             enemy_prev_positions: Vec::new(),
-            health_bar: HealthBar::new(260.0, 28.0, 20.0, PLAYER_BASE_STATS.vie, HealthBarAnchor::TopRight),
+            health_bar: HealthBar::new(260.0, 28.0, 20.0, PLAYER_BASE_STATS.vie, HealthBarAnchor::TopLeft),
         };
 
         game.refresh_map_variants();
@@ -575,6 +575,7 @@ impl Game {
             Ok(world) => world,
             Err(_) => return false,
         };
+        let (origin_x, origin_y) = self.world_origin();
         let input = CombatInput {
             keys_pressed: keys,
             mouse_click,
@@ -584,7 +585,7 @@ impl Game {
         let CombatResolution {
             messages,
             transition,
-        } = state.update(&mut world, &input);
+        } = state.update(&mut world, &input, origin_x, origin_y);
         for msg in messages {
             self.messages.push(Message {
                 texte: msg.texte,
@@ -645,7 +646,7 @@ impl Game {
             self.draw_player(&world, origin_x, origin_y);
             self.draw_enemies(&world, origin_x, origin_y);
             if let GameState::Combat(state) = &self.state {
-                state.draw_ui(&world, TILE_SIZE);
+                state.draw_ui(&world, TILE_SIZE, origin_x, origin_y);
             }
         }
         self.draw_messages();
@@ -654,9 +655,10 @@ impl Game {
     }
 
     fn draw_health_bar(&self) {
+        let (origin_x, origin_y) = self.world_origin();
         if let Ok(world) = self.world.lock() {
             if let Some(player) = world.players().get(0) {
-                self.health_bar.draw(player.stats());
+                self.health_bar.draw_at(player.stats(), origin_x, origin_y);
             }
         }
     }
