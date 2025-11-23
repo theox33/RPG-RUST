@@ -149,9 +149,16 @@ struct Message {
     centered: bool,
 }
 
+
+#[derive(Debug)]
+pub struct GameOverState {
+    pub selected: usize, // 0 = rejouer, 1 = quitter
+}
+
 enum GameState {
     Exploration,
     Combat(CombatState),
+    GameOver(GameOverState),
 }
 
 pub struct Game {
@@ -178,6 +185,96 @@ pub struct Game {
 }
 
 impl Game {
+        fn check_game_over(&mut self) {
+            if let Ok(world) = self.world.lock() {
+                if let Some(player) = world.players().get(0) {
+                    if player.stats().vie <= 0 {
+                        self.state = GameState::GameOver(GameOverState { selected: 0 });
+                    }
+                }
+            }
+        }
+
+        fn update_game_over(&mut self) {
+            // Flèches gauche/droite
+            if is_key_pressed(KeyCode::Left) {
+                if let GameState::GameOver(ref mut state) = self.state {
+                    state.selected = 0;
+                }
+            }
+            if is_key_pressed(KeyCode::Right) {
+                if let GameState::GameOver(ref mut state) = self.state {
+                    state.selected = 1;
+                }
+            }
+            // Entrée ou clic
+            let (screen_w, screen_h) = (screen_width(), screen_height());
+            let btn_w = 180.0;
+            let btn_h = 48.0;
+            let btn_y = screen_h * 0.5 + 40.0;
+            let btn1_x = screen_w * 0.5 - btn_w - 20.0;
+            let btn2_x = screen_w * 0.5 + 20.0;
+            let mouse = if is_mouse_button_pressed(MouseButton::Left) {
+                let (mx, my) = mouse_position();
+                Some((mx, my))
+            } else { None };
+            let mut clicked = None;
+            if let Some((mx, my)) = mouse {
+                if mx >= btn1_x && mx <= btn1_x + btn_w && my >= btn_y && my <= btn_y + btn_h {
+                    clicked = Some(0);
+                }
+                if mx >= btn2_x && mx <= btn2_x + btn_w && my >= btn_y && my <= btn_y + btn_h {
+                    clicked = Some(1);
+                }
+            }
+            let enter = is_key_pressed(KeyCode::Enter);
+            let selected = if let GameState::GameOver(ref state) = self.state { state.selected } else { 0 };
+            if enter || clicked.is_some() {
+                let action = clicked.unwrap_or(selected);
+                match action {
+                    0 => self.restart_game(),
+                    1 => std::process::exit(0),
+                    _ => {}
+                }
+            }
+        }
+
+        fn draw_game_over(&self) {
+            let (screen_w, screen_h) = (screen_width(), screen_height());
+            let rect_w = 520.0;
+            let rect_h = 220.0;
+            let rect_x = (screen_w - rect_w) * 0.5;
+            let rect_y = (screen_h - rect_h) * 0.5;
+            draw_rectangle(rect_x, rect_y, rect_w, rect_h, BLACK);
+            let text = "GAME OVER";
+            let font_size = 48.0;
+            let tw = measure_text(text, None, font_size as u16, 1.0).width;
+            draw_text(text, screen_w * 0.5 - tw * 0.5, rect_y + 64.0, font_size, WHITE);
+            let btn_w = 180.0;
+            let btn_h = 48.0;
+            let btn_y = screen_h * 0.5 + 40.0;
+            let btn1_x = screen_w * 0.5 - btn_w - 20.0;
+            let btn2_x = screen_w * 0.5 + 20.0;
+            let selected = if let GameState::GameOver(ref state) = self.state { state.selected } else { 0 };
+            draw_rectangle(btn1_x, btn_y, btn_w, btn_h, if selected == 0 { DARKGRAY } else { GRAY });
+            draw_rectangle(btn2_x, btn_y, btn_w, btn_h, if selected == 1 { DARKGRAY } else { GRAY });
+            draw_text("Rejouer", btn1_x + 32.0, btn_y + 32.0, 28.0, WHITE);
+            draw_text("Quitter", btn2_x + 32.0, btn_y + 32.0, 28.0, WHITE);
+        }
+
+        fn restart_game(&mut self) {
+            // Remet le joueur à son état initial
+            if let Ok(mut world) = self.world.lock() {
+                if let Some(player) = world.players_mut().get_mut(0) {
+                    player.stats_mut().vie = PLAYER_BASE_STATS.vie;
+                    player.position_mut().x = PLAYER_START_X;
+                    player.position_mut().y = PLAYER_START_Y;
+                }
+                // TODO: reset ennemis, coffres, etc. si besoin
+            }
+            self.state = GameState::Exploration;
+            self.messages.clear();
+        }
     pub fn new(
         map_texture: Texture2D,
         char_texture: Texture2D,
@@ -314,15 +411,22 @@ impl Game {
         clear_background(LIGHTGRAY);
         let dt = get_frame_time();
         self.update_messages(dt);
-        if matches!(self.state, GameState::Exploration) {
-            self.update_movement(dt);
-            self.update_enemy_movement(dt);
-            self.update_exploration(dt);
-            self.update_chest_prompt();
-            self.handle_chest_ui_input();
-        } else {
-            self.update_combat_state();
-            self.chests.clear_active();
+        self.check_game_over();
+        match &mut self.state {
+            GameState::Exploration => {
+                self.update_movement(dt);
+                self.update_enemy_movement(dt);
+                self.update_exploration(dt);
+                self.update_chest_prompt();
+                self.handle_chest_ui_input();
+            }
+            GameState::Combat(_) => {
+                self.update_combat_state();
+                self.chests.clear_active();
+            }
+            GameState::GameOver(_) => {
+                self.update_game_over();
+            }
         }
         self.update_chest_animation(dt);
         self.render();
@@ -643,15 +747,28 @@ impl Game {
             self.draw_houses(origin_x, origin_y);
         }
         if let Ok(world) = self.world.lock() {
-            self.draw_player(&world, origin_x, origin_y);
-            self.draw_enemies(&world, origin_x, origin_y);
-            if let GameState::Combat(state) = &self.state {
-                state.draw_ui(&world, TILE_SIZE, origin_x, origin_y);
+            match &self.state {
+                GameState::GameOver(_) => {
+                    // Ne pas dessiner le joueur ni les ennemis
+                }
+                GameState::Combat(state) => {
+                    self.draw_player(&world, origin_x, origin_y);
+                    self.draw_enemies(&world, origin_x, origin_y);
+                    state.draw_ui(&world, TILE_SIZE, origin_x, origin_y);
+                }
+                _ => {
+                    self.draw_player(&world, origin_x, origin_y);
+                    self.draw_enemies(&world, origin_x, origin_y);
+                }
             }
         }
-        self.draw_messages();
-        self.chests.draw_prompt();
-        self.draw_health_bar();
+        if let GameState::GameOver(_) = self.state {
+            self.draw_game_over();
+        } else {
+            self.draw_messages();
+            self.chests.draw_prompt();
+            self.draw_health_bar();
+        }
     }
 
     fn draw_health_bar(&self) {
