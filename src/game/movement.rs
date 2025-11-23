@@ -3,6 +3,7 @@ use macroquad::prelude::*;
 use super::*;
 
 impl Game {
+    /// Anime linéairement le déplacement du joueur en fonction du delta temps.
     pub(super) fn update_movement(&mut self, dt: f32) {
         if self.moving {
             self.move_progress += dt / self.move_time;
@@ -13,6 +14,7 @@ impl Game {
         }
     }
 
+    /// Met à jour les animations des ennemis et déclenche un combat en cas de collision.
     pub(super) fn update_enemy_movement(&mut self, dt: f32) {
         let (positions, player_pos) = match self.world.lock() {
             Ok(world) => (
@@ -103,6 +105,7 @@ impl Game {
         }
     }
 
+    /// Traite les entrées clavier pour déplacer le joueur sur la carte d'exploration.
     pub(super) fn update_exploration(&mut self, dt: f32) {
         if self.moving {
             self.player_anim.update(dt, true);
@@ -190,6 +193,7 @@ impl Game {
         }
     }
 
+    /// Configure les paramètres d'animation pour un déplacement du joueur.
     pub(super) fn begin_move_animation(&mut self, from: Position, to: Position) {
         self.moving = true;
         self.move_progress = 0.0;
@@ -201,6 +205,7 @@ impl Game {
         self.player_anim.frame_duration = self.move_time / nframes as f32;
     }
 
+    /// Passe en mode combat contre un ennemi ciblé et affiche un message.
     pub(super) fn engage_combat_with_enemy(&mut self, enemy_idx: usize, message: &str) {
         if !matches!(self.state, GameState::Exploration) {
             return;
@@ -224,6 +229,7 @@ impl Game {
         self.state = GameState::Combat(CombatState::with_initiative(0, enemy_idx, player_first));
     }
 
+    /// Met à jour l'état de combat courant s'il est actif.
     pub(super) fn update_combat_state(&mut self) {
         let current = std::mem::replace(&mut self.state, GameState::Exploration);
         if let GameState::Combat(mut state) = current {
@@ -238,6 +244,7 @@ impl Game {
         }
     }
 
+    /// Fait progresser un combat tour par tour et gère ses transitions.
     pub(super) fn update_combat(&mut self, state: &mut CombatState) -> bool {
         let keys = self.collect_combat_keys();
         let mouse_click = if is_mouse_button_pressed(MouseButton::Left) {
@@ -300,6 +307,7 @@ impl Game {
         continue_fight
     }
 
+    /// Collecte les touches utilisées pour déclencher les actions de combat.
     pub(super) fn collect_combat_keys(&self) -> Vec<KeyCode> {
         [KeyCode::A, KeyCode::D, KeyCode::F]
             .iter()

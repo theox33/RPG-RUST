@@ -15,6 +15,7 @@ pub enum HealthBarAnchor {
 }
 
 impl HealthBar {
+    /// Construit une barre de vie paramétrable (dimensions, marge, ancrage).
     pub fn new(
         width: f32,
         height: f32,
@@ -31,6 +32,7 @@ impl HealthBar {
         }
     }
 
+    /// Dessine la barre de vie à partir des statistiques fournies et d'un point d'origine.
     pub fn draw_at(&self, stats: &Stats, origin_x: f32, origin_y: f32) {
         let (x, y) = match self.anchor {
             HealthBarAnchor::TopLeft => (origin_x + self.margin, origin_y + self.margin),

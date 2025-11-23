@@ -24,6 +24,7 @@ impl World {
             }
         })
     }
+    /// Crée un monde rectangulaire vide de dimensions données.
     pub fn new(width: usize, height: usize) -> Self {
         World {
             width,
@@ -35,18 +36,22 @@ impl World {
         }
     }
 
+    /// Ajoute un joueur dans la liste interne.
     pub fn add_player(&mut self, p: Joueur) {
         self.players.push(p);
     }
 
+    /// Ajoute un ennemi dans la liste interne.
     pub fn add_enemy(&mut self, e: Ennemi) {
         self.enemies.push(e);
     }
 
+    /// Vérifie si une coordonnée appartient au monde.
     pub fn is_within(&self, x: isize, y: isize) -> bool {
         x >= 0 && y >= 0 && (x as usize) < self.width && (y as usize) < self.height
     }
 
+    /// Indique si une cellule donnée est libre (aucun joueur ou ennemi vivant).
     fn is_cell_free(&self, x: usize, y: usize) -> bool {
         self.players.iter().filter(|p| p.est_vivant()).all(|p| {
             let pos = p.position();
@@ -57,6 +62,7 @@ impl World {
         })
     }
 
+    /// Déplace un joueur identifié d'un vecteur (dx, dy) si la case est libre.
     pub fn move_player(&mut self, player_id: usize, dx: isize, dy: isize) -> bool {
         if let Some(idx) = self.players.iter().position(|p| p.id() == player_id) {
             if !self.players[idx].est_vivant() {
@@ -155,22 +161,27 @@ impl World {
         }
     }
 
+    /// Retourne une vue immuable sur les joueurs.
     pub fn players(&self) -> &[Joueur] {
         &self.players
     }
 
+    /// Retourne une vue immuable sur les ennemis.
     pub fn enemies(&self) -> &[Ennemi] {
         &self.enemies
     }
 
+    /// Retourne une vue mutable sur les joueurs.
     pub fn players_mut(&mut self) -> &mut [Joueur] {
         &mut self.players
     }
 
+    /// Retourne une vue mutable sur les ennemis.
     pub fn enemies_mut(&mut self) -> &mut [Ennemi] {
         &mut self.enemies
     }
 
+    /// Met à jour la carte de traversabilité utilisée par l'IA.
     pub fn update_walkable_map(&mut self, walkable: Vec<Vec<bool>>) {
         if walkable.len() == self.height && walkable.iter().all(|row| row.len() == self.width) {
             self.walkable = walkable;

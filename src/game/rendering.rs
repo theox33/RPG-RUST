@@ -3,6 +3,7 @@ use macroquad::prelude::*;
 use super::*;
 
 impl Game {
+    /// Dessine l'ensemble de la scène (monde, entités, UI) pour le frame courant.
     pub(super) fn render(&mut self) {
         let (origin_x, origin_y) = self.world_origin();
         self.draw_tiles(origin_x, origin_y);
@@ -52,6 +53,7 @@ impl Game {
         }
     }
 
+    /// Dessine la barre de vie du joueur à l'emplacement approprié.
     pub(super) fn draw_health_bar(&self) {
         let (origin_x, origin_y) = self.world_origin();
         if let Ok(world) = self.world.lock() {
@@ -61,6 +63,7 @@ impl Game {
         }
     }
 
+    /// Calcule le décalage nécessaire pour centrer le monde à l'écran.
     pub(super) fn world_origin(&self) -> (f32, f32) {
         let world_w = MAP_WIDTH as f32 * TILE_SIZE;
         let world_h = MAP_HEIGHT as f32 * TILE_SIZE;
@@ -69,6 +72,7 @@ impl Game {
         (origin_x, origin_y)
     }
 
+    /// Dessine les tuiles de terrain à partir des textures sélectionnées.
     pub(super) fn draw_tiles(&self, origin_x: f32, origin_y: f32) {
         if matches!(self.current_world, WorldKind::Maison) {
             self.draw_maison_background(origin_x, origin_y);
@@ -131,6 +135,7 @@ impl Game {
         }
     }
 
+    /// Affiche l'arrière-plan spécifique à l'intérieur de la maison.
     pub(super) fn draw_maison_background(&self, origin_x: f32, origin_y: f32) {
         let world_w = MAP_WIDTH as f32 * TILE_SIZE;
         let world_h = MAP_HEIGHT as f32 * TILE_SIZE;
@@ -146,6 +151,7 @@ impl Game {
         );
     }
 
+    /// Dessine le sprite du joueur en tenant compte des interpolations de mouvement.
     pub(super) fn draw_player(&self, world: &World, origin_x: f32, origin_y: f32) {
         if world.players().is_empty() {
             return;
@@ -179,6 +185,7 @@ impl Game {
         );
     }
 
+    /// Dessine chaque ennemi avec son animation et son interpolation propres.
     pub(super) fn draw_enemies(&self, world: &World, origin_x: f32, origin_y: f32) {
         for (idx, enemy) in world.enemies().iter().enumerate() {
             if idx >= self.enemy_anim.len() || !enemy.est_vivant() {
@@ -212,6 +219,7 @@ impl Game {
         }
     }
 
+    /// Affiche tous les messages temporaires, centrés ou non.
     pub(super) fn draw_messages(&self) {
         let mut y = 30.0;
         for msg in self.messages.iter().filter(|m| !m.centered) {
@@ -232,6 +240,7 @@ impl Game {
         }
     }
 
+    /// Dessine un message centré avec un fond semi-transparent.
     pub(super) fn draw_centered_message(&self, texte: &str, offset_y: f32) {
         let font_size: u16 = 32;
         let dims = measure_text(texte, None, font_size, 1.0);
@@ -250,6 +259,7 @@ impl Game {
         draw_text(texte, text_x, text_y, font_size as f32, WHITE);
     }
 
+    /// Dessine les maisons statiques disposées sur la carte.
     pub(super) fn draw_houses(&self, origin_x: f32, origin_y: f32) {
         let max_width = TILE_SIZE * HOUSE_TILE_WIDTH;
         let max_height = TILE_SIZE * HOUSE_TILE_HEIGHT;
@@ -278,6 +288,7 @@ impl Game {
         }
     }
 
+    /// Affiche le compteur d'ennemis restants dans le coin supérieur droit.
     pub(super) fn draw_enemy_counter(&self) {
         let remaining = self.remaining_enemies_total();
         let label = format!("Ennemis restants : {}", remaining);

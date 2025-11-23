@@ -73,6 +73,7 @@ enum PlayerAction {
 }
 
 impl CombatState {
+    /// Crée un état de combat standard entre un joueur et un ennemi donnés.
     pub fn new(player_idx: usize, enemy_idx: usize) -> Self {
         Self {
             player_idx,
@@ -87,16 +88,19 @@ impl CombatState {
         }
     }
 
+    /// Configure un combat en spécifiant qui prend l'initiative.
     pub fn with_initiative(player_idx: usize, enemy_idx: usize, player_first: bool) -> Self {
         let mut state = Self::new(player_idx, enemy_idx);
         state.player_turn = player_first;
         state
     }
 
+    /// Retourne l'indice de l'ennemi ciblé dans le monde.
     pub fn enemy_index(&self) -> usize {
         self.enemy_idx
     }
 
+    /// Met à jour la boucle de combat et renvoie la résolution (messages + transition).
     pub fn update(
         &mut self,
         world: &mut World,
@@ -350,6 +354,7 @@ impl CombatState {
         }
     }
 
+    /// Dessine l'interface utilisateur du combat (PV, boutons, popups).
     pub fn draw_ui(&self, world: &World, tile_size: f32, origin_x: f32, origin_y: f32) {
         // Affichage des popups de dégâts
         for popup in &self._damage_popups {
@@ -393,6 +398,7 @@ impl CombatState {
         draw_text("Fuir", btn3_x + 18.0, btn_y + 24.0, 20.0, DARKGRAY);
     }
 
+    /// Détermine l'action jouée par le joueur selon les entrées clavier/souris.
     fn extract_player_action(&self, input: &CombatInput) -> Option<PlayerAction> {
         if let Some(click) = input.mouse_click {
             if self.boutons.attaquer.contains(click) {
@@ -417,6 +423,7 @@ impl CombatState {
         None
     }
 
+    /// Met à jour la position des boutons de combat en fonction de l'aire de jeu.
     fn update_buttons(
         &mut self,
         tile_size: f32,

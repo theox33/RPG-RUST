@@ -54,6 +54,7 @@ enum WorldKind {
 }
 
 impl WorldKind {
+    /// Retourne le nom de fichier de carte associé au monde.
     fn filename(self) -> &'static str {
         match self {
             WorldKind::Plaine => "plaine.map",
@@ -63,6 +64,7 @@ impl WorldKind {
         }
     }
 
+    /// Fournit le message affiché lorsque l'on entre dans ce monde.
     fn entry_message(self) -> &'static str {
         match self {
             WorldKind::Plaine => "Vous retournez dehors.",
@@ -72,6 +74,7 @@ impl WorldKind {
         }
     }
 
+    /// Liste l'ensemble des mondes disponibles pour itération.
     fn all() -> &'static [WorldKind] {
         use WorldKind::*;
         &[Plaine, Maison, Spirale, Spirale2]
@@ -103,6 +106,7 @@ enum Direction {
 }
 
 impl Direction {
+    /// Calcule l'offset d'animation correspondant à une direction donnée.
     fn frame_offset(self) -> usize {
         match self {
             Direction::Down => 0,
@@ -122,6 +126,7 @@ struct PlayerAnim {
 }
 
 impl PlayerAnim {
+    /// Construit une animation de joueur initialisée vers le bas.
     fn new() -> Self {
         Self {
             direction: Direction::Down,
@@ -131,6 +136,7 @@ impl PlayerAnim {
         }
     }
 
+    /// Met à jour l'animation en fonction du temps écoulé et de l'état de mouvement.
     fn update(&mut self, dt: f32, moving: bool) {
         if moving {
             self.timer += dt;
@@ -144,6 +150,7 @@ impl PlayerAnim {
         }
     }
 
+    /// Donne l'index de frame courant à utiliser pour l'affichage.
     fn current_frame_index(&self) -> usize {
         self.direction.frame_offset() + self.frame
     }
@@ -202,6 +209,7 @@ pub struct Game {
 }
 
 impl Game {
+    /// Vérifie si le joueur est mort et bascule l'état en Game Over si nécessaire.
     fn check_game_over(&mut self) {
         if let Ok(world) = self.world.lock() {
             if let Some(player) = world.players().get(0) {
@@ -215,6 +223,7 @@ impl Game {
         }
     }
 
+    /// Gère les entrées et la logique de sélection sur l'écran de Game Over.
     fn update_game_over(&mut self) {
         let allow_restart = matches!(
             self.state,
@@ -286,6 +295,7 @@ impl Game {
         }
     }
 
+    /// Dessine l'écran de Game Over en fonction du scénario (défaite ou victoire).
     fn draw_game_over(&self) {
         let (screen_w, screen_h) = (screen_width(), screen_height());
         let allow_restart = matches!(
@@ -356,6 +366,7 @@ impl Game {
         }
     }
 
+    /// Réinitialise complètement le jeu après une défaite.
     fn restart_game(&mut self) {
         // Recharger la map et ses variantes
         let mut map_tiles = load_tiles_for_world(WorldKind::Plaine);
@@ -416,6 +427,7 @@ impl Game {
         self.state = GameState::Exploration;
         self.messages.clear();
     }
+    /// Crée un nouvel objet Game en chargeant les textures et les mondes.
     pub fn new(
         map_texture: Texture2D,
         char_texture: Texture2D,
@@ -555,6 +567,7 @@ impl Game {
         game
     }
 
+    /// Met à jour et dessine une frame complète du jeu.
     pub fn frame(&mut self) {
         clear_background(LIGHTGRAY);
         let dt = get_frame_time();
@@ -580,6 +593,7 @@ impl Game {
         self.render();
     }
 
+    /// Met à jour les messages temporaires affichés à l'écran.
     fn update_messages(&mut self, dt: f32) {
         for msg in &mut self.messages {
             if msg.timer > dt {
@@ -591,6 +605,7 @@ impl Game {
         self.messages.retain(|msg| msg.timer > 0.0);
     }
 
+    /// Anime les coffres, collecte leurs récompenses et déclenche les effets associés.
     fn update_chest_animation(&mut self, dt: f32) {
         self.chests
             .update_animation(dt, self.textures.chest_frames.len());
@@ -607,6 +622,7 @@ impl Game {
         }
     }
 
+    /// Active ou désactive l'invite d'ouverture de coffre selon la position du joueur.
     fn update_chest_prompt(&mut self) {
         if !matches!(self.state, GameState::Exploration) {
             self.chests.clear_active();
@@ -619,6 +635,7 @@ impl Game {
         self.chests.refresh_prompt(player_pos);
     }
 
+    /// Traite les clics de souris sur l'invite d'ouverture de coffre.
     fn handle_chest_ui_input(&mut self) {
         if !matches!(self.state, GameState::Exploration) {
             self.chests.clear_active();
@@ -652,6 +669,7 @@ impl Game {
         }
     }
 
+    /// Indique si une tuile donnée est praticable pour le joueur.
     fn tile_walkable(&self, x: usize, y: usize) -> bool {
         matches!(
             self.map_tiles[y][x],
@@ -663,6 +681,7 @@ impl Game {
         ) && !matches!(self.map_tiles[y][x], TileType::CollisionInvisible)
     }
 
+    /// Calcule le nombre total d'ennemis encore en vie tous mondes confondus.
     fn remaining_enemies_total(&self) -> usize {
         let mut total = 0;
         if let Ok(world) = self.world.lock() {

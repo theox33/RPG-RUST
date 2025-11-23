@@ -9,6 +9,7 @@ pub struct Joueur {
 }
 
 impl Joueur {
+    /// Crée un nouveau joueur avec les statistiques de base.
     pub fn nouveau(id: usize, pos: Position) -> Self {
         Self {
             id,
@@ -17,6 +18,7 @@ impl Joueur {
         }
     }
 
+    /// Tente d'octroyer un gain de vie aléatoire et retourne le montant éventuel.
     pub fn gain_vie_if_lucky(&mut self) -> Option<u32> {
         let mut rng = rand::thread_rng();
         if rng.gen_bool(0.5) {
@@ -31,22 +33,27 @@ impl Joueur {
 }
 
 impl Combatant for Joueur {
+    /// Identifiant unique du joueur.
     fn id(&self) -> usize {
         self.id
     }
 
+    /// Position actuelle du joueur.
     fn position(&self) -> Position {
         self.pos
     }
 
+    /// Position mutable du joueur.
     fn position_mut(&mut self) -> &mut Position {
         &mut self.pos
     }
 
+    /// Statistiques actuelles du joueur.
     fn stats(&self) -> &Stats {
         &self.stats
     }
 
+    /// Statistiques mutables du joueur.
     fn stats_mut(&mut self) -> &mut Stats {
         &mut self.stats
     }

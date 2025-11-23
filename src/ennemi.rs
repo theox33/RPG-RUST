@@ -11,6 +11,7 @@ pub struct Ennemi {
 }
 
 impl Ennemi {
+    /// Crée un nouvel ennemi avec des statistiques de base et un délai de déplacement aléatoire.
     pub fn nouveau(id: usize, pos: Position) -> Self {
         use rand::Rng;
         let mut rng = rand::thread_rng();
@@ -38,6 +39,7 @@ impl Ennemi {
         }
     }
 
+    /// Retourne une direction aléatoire de déplacement sous forme de vecteur discret.
     pub fn random_dir<R: Rng>(&self, rng: &mut R) -> (isize, isize) {
         match rng.gen_range(0..4) {
             0 => (0, -1),
@@ -49,22 +51,27 @@ impl Ennemi {
 }
 
 impl Combatant for Ennemi {
+    /// Identifiant unique de l'ennemi.
     fn id(&self) -> usize {
         self.id
     }
 
+    /// Position actuelle de l'ennemi.
     fn position(&self) -> Position {
         self.pos
     }
 
+    /// Position mutable de l'ennemi.
     fn position_mut(&mut self) -> &mut Position {
         &mut self.pos
     }
 
+    /// Statistiques actuelles de l'ennemi.
     fn stats(&self) -> &Stats {
         &self.stats
     }
 
+    /// Statistiques mutables de l'ennemi.
     fn stats_mut(&mut self) -> &mut Stats {
         &mut self.stats
     }

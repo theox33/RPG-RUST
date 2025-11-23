@@ -8,6 +8,7 @@ use game::Game;
 use macroquad::prelude::*;
 
 #[macroquad::main("RPG 2D - Fenêtre")]
+/// Point d'entrée du jeu qui charge les textures et lance la boucle principale.
 async fn main() {
     // Chargement des images de textures depuis les fichiers embarqués.
     let map_bytes: &[u8] = include_bytes!("textures/texture_map.png");

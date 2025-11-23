@@ -23,6 +23,7 @@ pub struct ChestState {
 }
 
 impl ChestState {
+    /// Crée un état de coffre fermé à une position donnée.
     fn new(position: Position) -> Self {
         Self {
             position,
@@ -37,6 +38,7 @@ impl ChestState {
         }
     }
 
+    /// Retourne l'index de frame à utiliser en fonction de l'animation en cours.
     fn current_frame(&self, max_frame: usize) -> usize {
         if self.animating {
             self.anim_frame.min(max_frame)
@@ -55,6 +57,7 @@ pub struct ChestSystem {
 }
 
 impl ChestSystem {
+    /// Construit un système de coffres vide et sans cache initial.
     pub fn new() -> Self {
         Self {
             chests: Vec::new(),
@@ -63,6 +66,7 @@ impl ChestSystem {
         }
     }
 
+    /// Affiche tous les coffres visibles sur la carte.
     pub fn draw(&self, textures: &GameTextures, origin_x: f32, origin_y: f32) {
         if self.chests.is_empty() || textures.chest_frames.is_empty() {
             return;
@@ -101,6 +105,7 @@ impl ChestSystem {
         }
     }
 
+    /// Dessine l'invite permettant d'ouvrir un coffre adjacent.
     pub fn draw_prompt(&self) {
         if self.active.is_none() {
             return;
@@ -120,6 +125,7 @@ impl ChestSystem {
         draw_text(label, text_x, text_y, 24.0, WHITE);
     }
 
+    /// Met à jour l'indicateur d'activité selon la proximité du joueur.
     pub fn refresh_prompt(&mut self, player_pos: Option<Position>) {
         let Some(player_pos) = player_pos else {
             self.active = None;
@@ -134,10 +140,12 @@ impl ChestSystem {
         self.active = next.map(|(idx, _)| idx);
     }
 
+    /// Supprime toute sélection active (ex: pendant les combats).
     pub fn clear_active(&mut self) {
         self.active = None;
     }
 
+    /// Gère le clic utilisateur pour ouvrir un coffre si possible.
     pub fn handle_click(&mut self, click_pos: Vec2) -> Option<Position> {
         let Some(idx) = self.active else {
             return None;
@@ -151,6 +159,7 @@ impl ChestSystem {
         None
     }
 
+    /// Met à jour les animations d'ouverture et les effets de disparition.
     pub fn update_animation(&mut self, dt: f32, frame_count: usize) {
         if dt <= 0.0 || self.chests.is_empty() || frame_count == 0 {
             return;
@@ -195,6 +204,7 @@ impl ChestSystem {
         }
     }
 
+    /// Recrée les coffres à partir d'une carte de tuiles ou du cache.
     pub fn rebuild_from_tiles(&mut self, tiles: &[Vec<TileType>], world: WorldKind) {
         let positions = detect_chest_positions(tiles);
         if positions.is_empty() {
@@ -223,12 +233,14 @@ impl ChestSystem {
         self.active = None;
     }
 
+    /// Sauvegarde l'état courant des coffres pour un monde donné.
     pub fn store_world_snapshot(&mut self, world: WorldKind) {
         if !self.chests.is_empty() {
             self.cache.insert(world, self.chests.clone());
         }
     }
 
+    /// Retourne les positions des coffres qui viennent d'être ouverts.
     pub fn collect_opened_rewards(&mut self) -> Vec<Position> {
         let mut rewards = Vec::new();
         for chest in &mut self.chests {
@@ -240,6 +252,7 @@ impl ChestSystem {
         rewards
     }
 
+    /// Lance l'animation d'ouverture pour un coffre donné.
     fn open_chest(&mut self, idx: usize) -> bool {
         if let Some(chest) = self.chests.get_mut(idx) {
             if chest.opened || chest.animating {
@@ -255,6 +268,7 @@ impl ChestSystem {
     }
 }
 
+/// Recherche toutes les positions de coffres à partir de la carte.
 fn detect_chest_positions(tiles: &[Vec<TileType>]) -> Vec<Position> {
     let mut chests = Vec::new();
     for y in 0..MAP_HEIGHT {
@@ -267,12 +281,14 @@ fn detect_chest_positions(tiles: &[Vec<TileType>]) -> Vec<Position> {
     chests
 }
 
+/// Vérifie si deux positions sont orthogonalement adjacentes.
 fn is_adjacent(a: Position, b: Position) -> bool {
     let dx = a.x as isize - b.x as isize;
     let dy = a.y as isize - b.y as isize;
     dx.abs() + dy.abs() == 1
 }
 
+/// Rectangle cliquable utilisé pour l'invite d'ouverture de coffre.
 fn prompt_rect() -> Rect {
     let x = 20.0;
     let y = screen_height() - PROMPT_HEIGHT - 20.0;

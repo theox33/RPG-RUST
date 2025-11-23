@@ -13,6 +13,7 @@ use super::{
     PLAYER_START_Y,
 };
 
+/// Génère des indices de variantes d'herbe pour chaque case afin de varier le rendu.
 pub(super) fn choose_grass_variants(
     textures: &GameTextures,
     tiles: &[Vec<TileType>],
@@ -33,6 +34,7 @@ pub(super) fn choose_grass_variants(
         .collect()
 }
 
+/// Sélectionne les variantes de texture des chemins en fonction de la carte.
 pub(super) fn choose_chemin_variants(
     textures: &GameTextures,
     tiles: &[Vec<TileType>],
@@ -56,6 +58,7 @@ pub(super) fn choose_chemin_variants(
         .collect()
 }
 
+/// Remplit le monde avec un certain nombre d'ennemis placés aléatoirement.
 pub(super) fn spawn_random_enemies(
     world: &mut World,
     tiles: &[Vec<TileType>],
@@ -90,6 +93,7 @@ pub(super) fn spawn_random_enemies(
     }
 }
 
+/// Démarre un thread qui fait errer périodiquement les ennemis du monde partagé.
 pub(super) fn start_enemy_thread(world: &Arc<Mutex<World>>) {
     let thread_world = Arc::clone(world);
     thread::spawn(move || {
@@ -104,6 +108,7 @@ pub(super) fn start_enemy_thread(world: &Arc<Mutex<World>>) {
     });
 }
 
+/// Ouvre un fichier `.map` et reconstruit la grille de tuiles correspondante.
 pub(super) fn parse_world_file(path: &Path) -> Result<Vec<Vec<TileType>>, String> {
     let content =
         fs::read_to_string(path).map_err(|e| format!("Impossible de lire {:?}: {}", path, e))?;
@@ -146,6 +151,7 @@ pub(super) fn parse_world_file(path: &Path) -> Result<Vec<Vec<TileType>>, String
     Ok(rows)
 }
 
+/// Traduit un code numérique lu dans le fichier en `TileType`.
 fn parse_tile_value(token: &str) -> Result<TileType, String> {
     let value: i32 = token
         .parse()
@@ -165,6 +171,7 @@ fn parse_tile_value(token: &str) -> Result<TileType, String> {
     }
 }
 
+/// Détecte les origines des blocs maisons pour ajuster l'affichage des sprites.
 pub(super) fn detect_house_anchors(tiles: &[Vec<TileType>]) -> Vec<Position> {
     let mut anchors = Vec::new();
     for y in 0..MAP_HEIGHT {
@@ -182,6 +189,7 @@ pub(super) fn detect_house_anchors(tiles: &[Vec<TileType>]) -> Vec<Position> {
     anchors
 }
 
+/// Fournit une carte fallback lorsque les fichiers sont absents ou corrompus.
 pub(super) fn default_map_tiles() -> Vec<Vec<TileType>> {
     let mut tiles = vec![vec![TileType::Herbe; MAP_WIDTH]; MAP_HEIGHT];
     for y in 0..=PLAYER_START_Y.min(MAP_HEIGHT - 1) {
@@ -195,11 +203,13 @@ pub(super) fn default_map_tiles() -> Vec<Vec<TileType>> {
     tiles
 }
 
+/// Charge la carte correspondant à un monde précis, avec repli si besoin.
 pub(super) fn load_tiles_for_world(kind: WorldKind) -> Vec<Vec<TileType>> {
     let target = Path::new("worlds").join(kind.filename());
     parse_world_file(&target).unwrap_or_else(|_| load_first_world_in_dir())
 }
 
+/// Tente de charger la première carte valide trouvée dans le dossier `worlds`.
 fn load_first_world_in_dir() -> Vec<Vec<TileType>> {
     let base = Path::new("worlds");
     let _ = fs::create_dir_all(base);
@@ -220,6 +230,7 @@ fn load_first_world_in_dir() -> Vec<Vec<TileType>> {
     default_map_tiles()
 }
 
+/// Génère une grille booléenne indiquant quelles cases sont traversables.
 pub(super) fn build_walkable_map(tiles: &[Vec<TileType>]) -> Vec<Vec<bool>> {
     tiles
         .iter()
@@ -240,6 +251,7 @@ pub(super) fn build_walkable_map(tiles: &[Vec<TileType>]) -> Vec<Vec<bool>> {
         .collect()
 }
 
+/// Recherche la position de la première tuile correspondant au type demandé.
 pub(super) fn find_tile_position(tiles: &[Vec<TileType>], needle: TileType) -> Option<Position> {
     for (y, row) in tiles.iter().enumerate() {
         for (x, tile) in row.iter().enumerate() {
@@ -251,6 +263,7 @@ pub(super) fn find_tile_position(tiles: &[Vec<TileType>], needle: TileType) -> O
     None
 }
 
+/// Définit le nombre maximal d'ennemis simultanés selon le monde.
 pub(super) fn enemy_cap(kind: WorldKind) -> usize {
     match kind {
         WorldKind::Plaine => MAX_ENEMIES,
