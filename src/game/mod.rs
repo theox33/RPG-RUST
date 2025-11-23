@@ -35,6 +35,7 @@ pub enum TileType {
     Eau,
     Maison,
     Portal,
+    SpiralPortal,
     CollisionInvisible,
     Coffre,
 }
@@ -43,6 +44,7 @@ pub enum TileType {
 enum WorldKind {
     Plaine,
     Maison,
+    Spirale,
 }
 
 impl WorldKind {
@@ -50,6 +52,7 @@ impl WorldKind {
         match self {
             WorldKind::Plaine => "plaine.map",
             WorldKind::Maison => "maison.map",
+            WorldKind::Spirale => "spirale.map",
         }
     }
 
@@ -57,6 +60,7 @@ impl WorldKind {
         match self {
             WorldKind::Plaine => "Vous retournez dehors.",
             WorldKind::Maison => "Vous entrez dans la maison.",
+            WorldKind::Spirale => "Vous sentez une étrange énergie en spirale...",
         }
     }
 }
@@ -654,9 +658,16 @@ impl Game {
                 timer: 0.6,
                 centered: false,
             });
-            if matches!(self.map_tiles[new_pos.y][new_pos.x], TileType::Portal) {
-                self.trigger_portal_transition();
-                return;
+            match self.map_tiles[new_pos.y][new_pos.x] {
+                TileType::Portal => {
+                    self.trigger_portal_transition();
+                    return;
+                }
+                TileType::SpiralPortal => {
+                    self.trigger_spiral_transition();
+                    return;
+                }
+                _ => {}
             }
         }
     }
@@ -880,7 +891,7 @@ impl Game {
                         .get(0)
                         .copied()
                         .unwrap_or(self.textures.chemin_src),
-                    TileType::Portal | TileType::CollisionInvisible | TileType::Coffre => {
+                    TileType::Portal | TileType::SpiralPortal | TileType::CollisionInvisible | TileType::Coffre => {
                         // Texture neutre ou rien
                         Rect::new(0.0, 0.0, 0.0, 0.0)
                     },
@@ -1090,7 +1101,7 @@ impl Game {
     fn tile_walkable(&self, x: usize, y: usize) -> bool {
         matches!(
             self.map_tiles[y][x],
-            TileType::Herbe | TileType::Chemin | TileType::Portal
+            TileType::Herbe | TileType::Chemin | TileType::Portal | TileType::SpiralPortal
         ) && !matches!(self.map_tiles[y][x], TileType::CollisionInvisible)
     }
 
@@ -1176,8 +1187,9 @@ impl Game {
         let target = match self.current_world {
             WorldKind::Plaine => WorldKind::Maison,
             WorldKind::Maison => WorldKind::Plaine,
+            _ => return,
         };
-        if self.switch_to_world(target) {
+        if self.switch_to_world(target, TileType::Portal) {
             self.messages.push(Message {
                 texte: target.entry_message().to_string(),
                 timer: 1.2,
@@ -1186,7 +1198,22 @@ impl Game {
         }
     }
 
-    fn switch_to_world(&mut self, target: WorldKind) -> bool {
+    fn trigger_spiral_transition(&mut self) {
+        let target = match self.current_world {
+            WorldKind::Plaine => WorldKind::Spirale,
+            WorldKind::Spirale => WorldKind::Plaine,
+            _ => return,
+        };
+        if self.switch_to_world(target, TileType::SpiralPortal) {
+            self.messages.push(Message {
+                texte: target.entry_message().to_string(),
+                timer: 1.2,
+                centered: false,
+            });
+        }
+    }
+
+    fn switch_to_world(&mut self, target: WorldKind, spawn_tile: TileType) -> bool {
         self.store_current_world_enemies();
         self.store_current_world_chests();
         let mut map_tiles = load_tiles_for_world(target);
@@ -1199,11 +1226,10 @@ impl Game {
         self.rebuild_chests_from_tiles();
         self.sync_world_walkable_map();
         self.respawn_enemies_for_current_world();
-        let spawn = find_portal_position(&self.map_tiles)
-            .unwrap_or(Position {
-                x: PLAYER_START_X,
-                y: PLAYER_START_Y,
-            });
+        let spawn = find_tile_position(&self.map_tiles, spawn_tile).unwrap_or(Position {
+            x: PLAYER_START_X,
+            y: PLAYER_START_Y,
+        });
         self.move_player_to(spawn);
         true
     }
@@ -1361,6 +1387,7 @@ fn parse_tile_value(token: &str) -> Result<TileType, String> {
         0 => Ok(TileType::Herbe),
         1 | 2 => Ok(TileType::Chemin),
         3 => Ok(TileType::Portal),
+        4 => Ok(TileType::SpiralPortal),
         other => Err(format!("Code tuile inconnu: {}", other)),
     }
 }
@@ -1425,16 +1452,16 @@ fn build_walkable_map(tiles: &[Vec<TileType>]) -> Vec<Vec<bool>> {
         .iter()
         .map(|row| {
             row.iter()
-                .map(|tile| matches!(tile, TileType::Herbe | TileType::Chemin | TileType::Portal) && !matches!(tile, TileType::CollisionInvisible))
+                .map(|tile| matches!(tile, TileType::Herbe | TileType::Chemin | TileType::Portal | TileType::SpiralPortal) && !matches!(tile, TileType::CollisionInvisible))
                 .collect::<Vec<bool>>()
         })
         .collect()
 }
 
-fn find_portal_position(tiles: &[Vec<TileType>]) -> Option<Position> {
+fn find_tile_position(tiles: &[Vec<TileType>], needle: TileType) -> Option<Position> {
     for (y, row) in tiles.iter().enumerate() {
         for (x, tile) in row.iter().enumerate() {
-            if matches!(tile, TileType::Portal) {
+            if *tile == needle {
                 return Some(Position { x, y });
             }
         }
@@ -1446,5 +1473,6 @@ fn enemy_cap(kind: WorldKind) -> usize {
     match kind {
         WorldKind::Plaine => MAX_ENEMIES,
         WorldKind::Maison => 0,
+        WorldKind::Spirale => 5,
     }
 }
