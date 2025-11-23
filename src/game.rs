@@ -164,6 +164,7 @@ struct Message {
 #[derive(Debug)]
 pub struct GameOverState {
     pub selected: usize, // 0 = rejouer, 1 = quitter
+    pub allow_restart: bool,
 }
 
 enum GameState {
@@ -200,15 +201,25 @@ impl Game {
         if let Ok(world) = self.world.lock() {
             if let Some(player) = world.players().get(0) {
                 if player.stats().vie <= 0 {
-                    self.state = GameState::GameOver(GameOverState { selected: 0 });
+                    self.state = GameState::GameOver(GameOverState {
+                        selected: 0,
+                        allow_restart: true,
+                    });
                 }
             }
         }
     }
 
     fn update_game_over(&mut self) {
-        // Flèches gauche/droite
-        if is_key_pressed(KeyCode::Left) {
+        let allow_restart = matches!(
+            self.state,
+            GameState::GameOver(GameOverState {
+                allow_restart: true,
+                ..
+            })
+        );
+
+        if allow_restart && is_key_pressed(KeyCode::Left) {
             if let GameState::GameOver(ref mut state) = self.state {
                 state.selected = 0;
             }
@@ -218,13 +229,22 @@ impl Game {
                 state.selected = 1;
             }
         }
-        // Entrée ou clic
+        if !allow_restart {
+            if let GameState::GameOver(ref mut state) = self.state {
+                state.selected = 1;
+            }
+        }
+
         let (screen_w, screen_h) = (screen_width(), screen_height());
         let btn_w = 180.0;
         let btn_h = 48.0;
         let btn_y = screen_h * 0.5 + 40.0;
         let btn1_x = screen_w * 0.5 - btn_w - 20.0;
-        let btn2_x = screen_w * 0.5 + 20.0;
+        let btn2_x = if allow_restart {
+            screen_w * 0.5 + 20.0
+        } else {
+            screen_w * 0.5 - btn_w * 0.5
+        };
         let mouse = if is_mouse_button_pressed(MouseButton::Left) {
             let (mx, my) = mouse_position();
             Some((mx, my))
@@ -233,7 +253,12 @@ impl Game {
         };
         let mut clicked = None;
         if let Some((mx, my)) = mouse {
-            if mx >= btn1_x && mx <= btn1_x + btn_w && my >= btn_y && my <= btn_y + btn_h {
+            if allow_restart
+                && mx >= btn1_x
+                && mx <= btn1_x + btn_w
+                && my >= btn_y
+                && my <= btn_y + btn_h
+            {
                 clicked = Some(0);
             }
             if mx >= btn2_x && mx <= btn2_x + btn_w && my >= btn_y && my <= btn_y + btn_h {
@@ -249,7 +274,7 @@ impl Game {
         if enter || clicked.is_some() {
             let action = clicked.unwrap_or(selected);
             match action {
-                0 => self.restart_game(),
+                0 if allow_restart => self.restart_game(),
                 1 => std::process::exit(0),
                 _ => {}
             }
@@ -258,47 +283,72 @@ impl Game {
 
     fn draw_game_over(&self) {
         let (screen_w, screen_h) = (screen_width(), screen_height());
-        let rect_w = 520.0;
-        let rect_h = 220.0;
-        let rect_x = (screen_w - rect_w) * 0.5;
-        let rect_y = (screen_h - rect_h) * 0.5;
-        draw_rectangle(rect_x, rect_y, rect_w, rect_h, BLACK);
-        let text = "GAME OVER";
-        let font_size = 48.0;
-        let tw = measure_text(text, None, font_size as u16, 1.0).width;
-        draw_text(
-            text,
-            screen_w * 0.5 - tw * 0.5,
-            rect_y + 64.0,
-            font_size,
-            WHITE,
+        let allow_restart = matches!(
+            self.state,
+            GameState::GameOver(GameOverState {
+                allow_restart: true,
+                ..
+            })
         );
-        let btn_w = 180.0;
-        let btn_h = 48.0;
-        let btn_y = screen_h * 0.5 + 40.0;
-        let btn1_x = screen_w * 0.5 - btn_w - 20.0;
-        let btn2_x = screen_w * 0.5 + 20.0;
         let selected = if let GameState::GameOver(ref state) = self.state {
             state.selected
         } else {
             0
         };
-        draw_rectangle(
-            btn1_x,
-            btn_y,
-            btn_w,
-            btn_h,
-            if selected == 0 { DARKGRAY } else { GRAY },
-        );
-        draw_rectangle(
-            btn2_x,
-            btn_y,
-            btn_w,
-            btn_h,
-            if selected == 1 { DARKGRAY } else { GRAY },
-        );
-        draw_text("Rejouer", btn1_x + 32.0, btn_y + 32.0, 28.0, WHITE);
-        draw_text("Quitter", btn2_x + 32.0, btn_y + 32.0, 28.0, WHITE);
+
+        if allow_restart {
+            let rect_w = 520.0;
+            let rect_h = 220.0;
+            let rect_x = (screen_w - rect_w) * 0.5;
+            let rect_y = (screen_h - rect_h) * 0.5;
+            draw_rectangle(rect_x, rect_y, rect_w, rect_h, BLACK);
+            let text = "GAME OVER";
+            let font_size = 48.0;
+            let tw = measure_text(text, None, font_size as u16, 1.0).width;
+            draw_text(
+                text,
+                screen_w * 0.5 - tw * 0.5,
+                rect_y + 64.0,
+                font_size,
+                WHITE,
+            );
+            let btn_w = 180.0;
+            let btn_h = 48.0;
+            let btn_y = screen_h * 0.5 + 40.0;
+            let btn1_x = screen_w * 0.5 - btn_w - 20.0;
+            let btn2_x = screen_w * 0.5 + 20.0;
+            draw_rectangle(
+                btn1_x,
+                btn_y,
+                btn_w,
+                btn_h,
+                if selected == 0 { DARKGRAY } else { GRAY },
+            );
+            draw_rectangle(
+                btn2_x,
+                btn_y,
+                btn_w,
+                btn_h,
+                if selected == 1 { DARKGRAY } else { GRAY },
+            );
+            draw_text("Rejouer", btn1_x + 32.0, btn_y + 32.0, 28.0, WHITE);
+            draw_text("Quitter", btn2_x + 32.0, btn_y + 32.0, 28.0, WHITE);
+        } else {
+            self.draw_messages();
+            let btn_w = 200.0;
+            let btn_h = 52.0;
+            let btn_x = screen_w * 0.5 - btn_w * 0.5;
+            let btn_y = screen_h * 0.5 + 40.0;
+            draw_rectangle(
+                btn_x,
+                btn_y,
+                btn_w,
+                btn_h,
+                if selected == 1 { DARKGRAY } else { GRAY },
+            );
+            draw_rectangle_lines(btn_x, btn_y, btn_w, btn_h, 2.0, WHITE);
+            draw_text("Quitter", btn_x + 48.0, btn_y + 34.0, 28.0, WHITE);
+        }
     }
 
     fn restart_game(&mut self) {
@@ -539,8 +589,15 @@ impl Game {
         self.chests
             .update_animation(dt, self.textures.chest_frames.len());
         let rewards = self.chests.collect_opened_rewards();
-        for _ in rewards {
-            self.apply_player_attack_bonus();
+        for position in rewards {
+            if matches!(
+                self.map_tiles[position.y][position.x],
+                TileType::VictoryChest
+            ) {
+                self.trigger_victory();
+            } else {
+                self.apply_player_attack_bonus();
+            }
         }
     }
 
@@ -583,6 +640,9 @@ impl Game {
                 timer,
                 centered,
             });
+            if tile == TileType::VictoryChest {
+                self.trigger_victory();
+            }
         }
     }
 

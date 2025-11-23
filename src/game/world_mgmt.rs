@@ -194,4 +194,21 @@ impl Game {
             });
         }
     }
+
+    pub(super) fn trigger_victory(&mut self) {
+        if matches!(
+            self.state,
+            GameState::GameOver(GameOverState {
+                allow_restart: false,
+                ..
+            })
+        ) {
+            return;
+        }
+        self.chests.clear_active();
+        self.state = GameState::GameOver(GameOverState {
+            selected: 1,
+            allow_restart: false,
+        });
+    }
 }
