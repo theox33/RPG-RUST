@@ -48,6 +48,7 @@ impl Game {
             self.draw_messages();
             self.chests.draw_prompt();
             self.draw_health_bar();
+            self.draw_enemy_counter();
         }
     }
 
@@ -275,5 +276,29 @@ impl Game {
                 },
             );
         }
+    }
+
+    pub(super) fn draw_enemy_counter(&self) {
+        let remaining = self.remaining_enemies_total();
+        let label = format!("Ennemis restants : {}", remaining);
+        let font_size = 24.0;
+        let dims = measure_text(&label, None, font_size as u16, 1.0);
+        let padding = 12.0;
+        let margin = 16.0;
+        let rect_w = dims.width + padding * 2.0;
+        let rect_h = dims.height + padding * 1.5;
+        let rect_x = screen_width() - rect_w - margin;
+        let rect_y = margin;
+        draw_rectangle(
+            rect_x,
+            rect_y,
+            rect_w,
+            rect_h,
+            Color::new(0.0, 0.0, 0.0, 0.65),
+        );
+        draw_rectangle_lines(rect_x, rect_y, rect_w, rect_h, 1.5, WHITE);
+        let text_x = rect_x + padding;
+        let text_y = rect_y + rect_h - padding * 0.4;
+        draw_text(&label, text_x, text_y, font_size, WHITE);
     }
 }

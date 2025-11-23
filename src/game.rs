@@ -71,6 +71,11 @@ impl WorldKind {
             WorldKind::Spirale2 => "Un vortex de puissance s'ouvre devant vous...",
         }
     }
+
+    fn all() -> &'static [WorldKind] {
+        use WorldKind::*;
+        &[Plaine, Maison, Spirale, Spirale2]
+    }
 }
 
 pub struct GameTextures {
@@ -544,6 +549,7 @@ impl Game {
         game.refresh_map_variants();
         game.rebuild_chests_from_tiles();
         game.sync_world_walkable_map();
+        game.preload_enemy_caches();
         game.respawn_enemies_for_current_world();
         start_enemy_thread(&game.world);
         game
@@ -655,5 +661,23 @@ impl Game {
                 | TileType::SpiralPortal
                 | TileType::SpiralPortal2
         ) && !matches!(self.map_tiles[y][x], TileType::CollisionInvisible)
+    }
+
+    fn remaining_enemies_total(&self) -> usize {
+        let mut total = 0;
+        if let Ok(world) = self.world.lock() {
+            total += world
+                .enemies()
+                .iter()
+                .filter(|enemy| enemy.est_vivant())
+                .count();
+        }
+        for (kind, enemies) in &self.enemy_cache {
+            if *kind == self.current_world {
+                continue;
+            }
+            total += enemies.iter().filter(|enemy| enemy.est_vivant()).count();
+        }
+        total
     }
 }

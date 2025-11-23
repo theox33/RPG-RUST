@@ -41,6 +41,21 @@ impl Game {
         self.rebuild_enemy_animation_state(snapshot);
     }
 
+    pub(super) fn preload_enemy_caches(&mut self) {
+        for &kind in WorldKind::all() {
+            let mut tiles = load_tiles_for_world(kind);
+            if tiles.len() != MAP_HEIGHT || tiles[0].len() != MAP_WIDTH {
+                tiles = default_map_tiles();
+            }
+            let mut temp_world = World::new(MAP_WIDTH, MAP_HEIGHT);
+            let cap = enemy_cap(kind);
+            if cap > 0 {
+                spawn_random_enemies(&mut temp_world, &tiles, cap, kind);
+            }
+            self.enemy_cache.insert(kind, temp_world.enemies().to_vec());
+        }
+    }
+
     pub(super) fn store_current_world_enemies(&mut self) {
         if let Ok(world) = self.world.lock() {
             self.enemy_cache
