@@ -1,16 +1,16 @@
+mod coffre;
 pub mod combat;
 mod healthbar;
-mod coffre;
 
 use crate::ennemi::Ennemi;
 use crate::joueur::Joueur;
 use crate::types::{Combatant, Position, PLAYER_BASE_STATS};
 use crate::world::World;
 use ::rand::{thread_rng, Rng};
+use coffre::ChestSystem;
 use combat::{CombatInput, CombatResolution, CombatResult, CombatState, CombatTransition};
 use healthbar::{HealthBar, HealthBarAnchor};
 use macroquad::prelude::*;
-use coffre::ChestSystem;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -39,6 +39,7 @@ pub enum TileType {
     SpiralPortal2,
     CollisionInvisible,
     Coffre,
+    VictoryChest,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
@@ -157,7 +158,6 @@ struct Message {
     centered: bool,
 }
 
-
 #[derive(Debug)]
 pub struct GameOverState {
     pub selected: usize, // 0 = rejouer, 1 = quitter
@@ -193,143 +193,171 @@ pub struct Game {
 }
 
 impl Game {
-        fn check_game_over(&mut self) {
-            if let Ok(world) = self.world.lock() {
-                if let Some(player) = world.players().get(0) {
-                    if player.stats().vie <= 0 {
-                        self.state = GameState::GameOver(GameOverState { selected: 0 });
-                    }
+    fn check_game_over(&mut self) {
+        if let Ok(world) = self.world.lock() {
+            if let Some(player) = world.players().get(0) {
+                if player.stats().vie <= 0 {
+                    self.state = GameState::GameOver(GameOverState { selected: 0 });
                 }
             }
         }
+    }
 
-        fn update_game_over(&mut self) {
-            // Flèches gauche/droite
-            if is_key_pressed(KeyCode::Left) {
-                if let GameState::GameOver(ref mut state) = self.state {
-                    state.selected = 0;
-                }
-            }
-            if is_key_pressed(KeyCode::Right) {
-                if let GameState::GameOver(ref mut state) = self.state {
-                    state.selected = 1;
-                }
-            }
-            // Entrée ou clic
-            let (screen_w, screen_h) = (screen_width(), screen_height());
-            let btn_w = 180.0;
-            let btn_h = 48.0;
-            let btn_y = screen_h * 0.5 + 40.0;
-            let btn1_x = screen_w * 0.5 - btn_w - 20.0;
-            let btn2_x = screen_w * 0.5 + 20.0;
-            let mouse = if is_mouse_button_pressed(MouseButton::Left) {
-                let (mx, my) = mouse_position();
-                Some((mx, my))
-            } else { None };
-            let mut clicked = None;
-            if let Some((mx, my)) = mouse {
-                if mx >= btn1_x && mx <= btn1_x + btn_w && my >= btn_y && my <= btn_y + btn_h {
-                    clicked = Some(0);
-                }
-                if mx >= btn2_x && mx <= btn2_x + btn_w && my >= btn_y && my <= btn_y + btn_h {
-                    clicked = Some(1);
-                }
-            }
-            let enter = is_key_pressed(KeyCode::Enter);
-            let selected = if let GameState::GameOver(ref state) = self.state { state.selected } else { 0 };
-            if enter || clicked.is_some() {
-                let action = clicked.unwrap_or(selected);
-                match action {
-                    0 => self.restart_game(),
-                    1 => std::process::exit(0),
-                    _ => {}
-                }
+    fn update_game_over(&mut self) {
+        // Flèches gauche/droite
+        if is_key_pressed(KeyCode::Left) {
+            if let GameState::GameOver(ref mut state) = self.state {
+                state.selected = 0;
             }
         }
+        if is_key_pressed(KeyCode::Right) {
+            if let GameState::GameOver(ref mut state) = self.state {
+                state.selected = 1;
+            }
+        }
+        // Entrée ou clic
+        let (screen_w, screen_h) = (screen_width(), screen_height());
+        let btn_w = 180.0;
+        let btn_h = 48.0;
+        let btn_y = screen_h * 0.5 + 40.0;
+        let btn1_x = screen_w * 0.5 - btn_w - 20.0;
+        let btn2_x = screen_w * 0.5 + 20.0;
+        let mouse = if is_mouse_button_pressed(MouseButton::Left) {
+            let (mx, my) = mouse_position();
+            Some((mx, my))
+        } else {
+            None
+        };
+        let mut clicked = None;
+        if let Some((mx, my)) = mouse {
+            if mx >= btn1_x && mx <= btn1_x + btn_w && my >= btn_y && my <= btn_y + btn_h {
+                clicked = Some(0);
+            }
+            if mx >= btn2_x && mx <= btn2_x + btn_w && my >= btn_y && my <= btn_y + btn_h {
+                clicked = Some(1);
+            }
+        }
+        let enter = is_key_pressed(KeyCode::Enter);
+        let selected = if let GameState::GameOver(ref state) = self.state {
+            state.selected
+        } else {
+            0
+        };
+        if enter || clicked.is_some() {
+            let action = clicked.unwrap_or(selected);
+            match action {
+                0 => self.restart_game(),
+                1 => std::process::exit(0),
+                _ => {}
+            }
+        }
+    }
 
-        fn draw_game_over(&self) {
-            let (screen_w, screen_h) = (screen_width(), screen_height());
-            let rect_w = 520.0;
-            let rect_h = 220.0;
-            let rect_x = (screen_w - rect_w) * 0.5;
-            let rect_y = (screen_h - rect_h) * 0.5;
-            draw_rectangle(rect_x, rect_y, rect_w, rect_h, BLACK);
-            let text = "GAME OVER";
-            let font_size = 48.0;
-            let tw = measure_text(text, None, font_size as u16, 1.0).width;
-            draw_text(text, screen_w * 0.5 - tw * 0.5, rect_y + 64.0, font_size, WHITE);
-            let btn_w = 180.0;
-            let btn_h = 48.0;
-            let btn_y = screen_h * 0.5 + 40.0;
-            let btn1_x = screen_w * 0.5 - btn_w - 20.0;
-            let btn2_x = screen_w * 0.5 + 20.0;
-            let selected = if let GameState::GameOver(ref state) = self.state { state.selected } else { 0 };
-            draw_rectangle(btn1_x, btn_y, btn_w, btn_h, if selected == 0 { DARKGRAY } else { GRAY });
-            draw_rectangle(btn2_x, btn_y, btn_w, btn_h, if selected == 1 { DARKGRAY } else { GRAY });
-            draw_text("Rejouer", btn1_x + 32.0, btn_y + 32.0, 28.0, WHITE);
-            draw_text("Quitter", btn2_x + 32.0, btn_y + 32.0, 28.0, WHITE);
+    fn draw_game_over(&self) {
+        let (screen_w, screen_h) = (screen_width(), screen_height());
+        let rect_w = 520.0;
+        let rect_h = 220.0;
+        let rect_x = (screen_w - rect_w) * 0.5;
+        let rect_y = (screen_h - rect_h) * 0.5;
+        draw_rectangle(rect_x, rect_y, rect_w, rect_h, BLACK);
+        let text = "GAME OVER";
+        let font_size = 48.0;
+        let tw = measure_text(text, None, font_size as u16, 1.0).width;
+        draw_text(
+            text,
+            screen_w * 0.5 - tw * 0.5,
+            rect_y + 64.0,
+            font_size,
+            WHITE,
+        );
+        let btn_w = 180.0;
+        let btn_h = 48.0;
+        let btn_y = screen_h * 0.5 + 40.0;
+        let btn1_x = screen_w * 0.5 - btn_w - 20.0;
+        let btn2_x = screen_w * 0.5 + 20.0;
+        let selected = if let GameState::GameOver(ref state) = self.state {
+            state.selected
+        } else {
+            0
+        };
+        draw_rectangle(
+            btn1_x,
+            btn_y,
+            btn_w,
+            btn_h,
+            if selected == 0 { DARKGRAY } else { GRAY },
+        );
+        draw_rectangle(
+            btn2_x,
+            btn_y,
+            btn_w,
+            btn_h,
+            if selected == 1 { DARKGRAY } else { GRAY },
+        );
+        draw_text("Rejouer", btn1_x + 32.0, btn_y + 32.0, 28.0, WHITE);
+        draw_text("Quitter", btn2_x + 32.0, btn_y + 32.0, 28.0, WHITE);
+    }
+
+    fn restart_game(&mut self) {
+        // Recharger la map et ses variantes
+        let mut map_tiles = load_tiles_for_world(WorldKind::Plaine);
+        if map_tiles.len() != MAP_HEIGHT || map_tiles[0].len() != MAP_WIDTH {
+            map_tiles = default_map_tiles();
+        }
+        self.map_tiles = map_tiles;
+        self.current_world = WorldKind::Plaine;
+        self.refresh_map_variants();
+        self.rebuild_chests_from_tiles();
+        self.sync_world_walkable_map();
+
+        // Réinitialiser le joueur
+        if let Ok(mut world) = self.world.lock() {
+            world.players.clear();
+            world.add_player(Joueur::nouveau(
+                0,
+                Position {
+                    x: PLAYER_START_X,
+                    y: PLAYER_START_Y,
+                },
+            ));
+            // Réinitialiser les ennemis
+            world.enemies.clear();
+            spawn_random_enemies(
+                &mut world,
+                &self.map_tiles,
+                enemy_cap(self.current_world),
+                self.current_world,
+            );
+            world.enemies_frozen = false;
         }
 
-        fn restart_game(&mut self) {
-            // Recharger la map et ses variantes
-            let mut map_tiles = load_tiles_for_world(WorldKind::Plaine);
-            if map_tiles.len() != MAP_HEIGHT || map_tiles[0].len() != MAP_WIDTH {
-                map_tiles = default_map_tiles();
-            }
-            self.map_tiles = map_tiles;
-            self.current_world = WorldKind::Plaine;
-            self.refresh_map_variants();
-            self.rebuild_chests_from_tiles();
-            self.sync_world_walkable_map();
+        // Réinitialiser l’animation du joueur
+        self.player_anim = PlayerAnim::new();
+        self.moving = false;
+        self.move_progress = 0.0;
+        self.move_from = Position {
+            x: PLAYER_START_X,
+            y: PLAYER_START_Y,
+        };
+        self.move_to = Position {
+            x: PLAYER_START_X,
+            y: PLAYER_START_Y,
+        };
 
-            // Réinitialiser le joueur
-            if let Ok(mut world) = self.world.lock() {
-                world.players.clear();
-                world.add_player(Joueur::nouveau(
-                    0,
-                    Position {
-                        x: PLAYER_START_X,
-                        y: PLAYER_START_Y,
-                    },
-                ));
-                // Réinitialiser les ennemis
-                world.enemies.clear();
-                spawn_random_enemies(
-                    &mut world,
-                    &self.map_tiles,
-                    enemy_cap(self.current_world),
-                    self.current_world,
-                );
-                world.enemies_frozen = false;
-            }
-
-            // Réinitialiser l’animation du joueur
-            self.player_anim = PlayerAnim::new();
-            self.moving = false;
-            self.move_progress = 0.0;
-            self.move_from = Position {
-                x: PLAYER_START_X,
-                y: PLAYER_START_Y,
-            };
-            self.move_to = Position {
-                x: PLAYER_START_X,
-                y: PLAYER_START_Y,
-            };
-
-            // Réinitialiser l’animation des ennemis
-            let mut positions = Vec::new();
-            if let Ok(world) = self.world.lock() {
-                positions = world.enemies().iter().map(|e| e.position()).collect();
-            }
-            self.rebuild_enemy_animation_state(positions);
-
-            // Réinitialiser les coffres
-            self.chests = ChestSystem::new();
-            self.rebuild_chests_from_tiles();
-
-            self.state = GameState::Exploration;
-            self.messages.clear();
+        // Réinitialiser l’animation des ennemis
+        let mut positions = Vec::new();
+        if let Ok(world) = self.world.lock() {
+            positions = world.enemies().iter().map(|e| e.position()).collect();
         }
+        self.rebuild_enemy_animation_state(positions);
+
+        // Réinitialiser les coffres
+        self.chests = ChestSystem::new();
+        self.rebuild_chests_from_tiles();
+
+        self.state = GameState::Exploration;
+        self.messages.clear();
+    }
     pub fn new(
         map_texture: Texture2D,
         char_texture: Texture2D,
@@ -451,7 +479,13 @@ impl Game {
             chemin_choice: vec![vec![0; MAP_WIDTH]; MAP_HEIGHT],
             enemy_anim: Vec::new(),
             enemy_prev_positions: Vec::new(),
-            health_bar: HealthBar::new(260.0, 28.0, 20.0, PLAYER_BASE_STATS.vie, HealthBarAnchor::TopLeft),
+            health_bar: HealthBar::new(
+                260.0,
+                28.0,
+                20.0,
+                PLAYER_BASE_STATS.vie,
+                HealthBarAnchor::TopLeft,
+            ),
         };
 
         game.refresh_map_variants();
@@ -767,17 +801,15 @@ impl Game {
         let continue_fight = match transition {
             CombatTransition::Continue => true,
             CombatTransition::Terminer(result) => {
-                if matches!(result, CombatResult::JoueurVainqueur | CombatResult::DoubleKo) {
+                if matches!(
+                    result,
+                    CombatResult::JoueurVainqueur | CombatResult::DoubleKo
+                ) {
                     let enemy_idx = state.enemy_index();
                     if enemy_idx < world.enemies.len() {
                         world.enemies.remove(enemy_idx);
-                        rebuild_positions = Some(
-                            world
-                                .enemies()
-                                .iter()
-                                .map(|e| e.position())
-                                .collect(),
-                        );
+                        rebuild_positions =
+                            Some(world.enemies().iter().map(|e| e.position()).collect());
                     }
                 }
                 if let CombatResult::EnnemiVainqueur | CombatResult::DoubleKo = result {
@@ -828,8 +860,11 @@ impl Game {
                     let bar_h = 8.0;
                     let bar_x = ex + (TILE_SIZE - bar_w) * 0.5;
                     let bar_y = ey - bar_h - 6.0;
-                    // Vie max de l'ennemi = 100
-                    let max_vie = 100;
+                    let max_vie = if matches!(self.current_world, WorldKind::Spirale2) {
+                        200
+                    } else {
+                        100
+                    };
                     let ratio = (enemy.stats().vie as f32 / max_vie as f32).clamp(0.0, 1.0);
                     let filled = bar_w * ratio;
                     let bg = Color::new(0.1, 0.1, 0.1, 0.85);
@@ -912,10 +947,10 @@ impl Game {
                             self.textures.chemin_src
                         }
                     }
-                    TileType::CollisionInvisible | TileType::Coffre => {
+                    TileType::CollisionInvisible | TileType::Coffre | TileType::VictoryChest => {
                         // Texture neutre ou rien
                         Rect::new(0.0, 0.0, 0.0, 0.0)
-                    },
+                    }
                 };
                 let dest_x = origin_x + x as f32 * TILE_SIZE;
                 let dest_y = origin_y + y as f32 * TILE_SIZE;
@@ -964,11 +999,23 @@ impl Game {
             return;
         }
         let (mx, my) = mouse_position();
-        if self.chests.handle_click(Vec2::new(mx, my)) {
+        if let Some(position) = self.chests.handle_click(Vec2::new(mx, my)) {
+            let tile = self.map_tiles[position.y][position.x];
+            let (texte, timer, centered) = if tile == TileType::VictoryChest {
+                (
+                    String::from(
+                        "Bravo, vous avez vaincu tous les ennemis! Le monde est plus sûr grâce à vous!",
+                    ),
+                    3.0,
+                    true,
+                )
+            } else {
+                (String::from("Vous ouvrez le coffre."), 1.2, false)
+            };
             self.messages.push(Message {
-                texte: String::from("Vous ouvrez le coffre."),
-                timer: 1.2,
-                centered: false,
+                texte,
+                timer,
+                centered,
             });
         }
     }
@@ -1067,7 +1114,8 @@ impl Game {
             let stack_spacing = 16.0;
             let box_height = 64.0;
             for (idx, msg) in centered.into_iter().enumerate() {
-                let offset = (idx as f32 - (total as f32 - 1.0) * 0.5) * (box_height + stack_spacing);
+                let offset =
+                    (idx as f32 - (total as f32 - 1.0) * 0.5) * (box_height + stack_spacing);
                 self.draw_centered_message(&msg.texte, offset);
             }
         }
@@ -1157,18 +1205,9 @@ impl Game {
             } else {
                 let cap = enemy_cap(self.current_world);
                 if cap > 0 {
-                    spawn_random_enemies(
-                        &mut world,
-                        &self.map_tiles,
-                        cap,
-                        self.current_world,
-                    );
+                    spawn_random_enemies(&mut world, &self.map_tiles, cap, self.current_world);
                 }
-                snapshot = world
-                    .enemies()
-                    .iter()
-                    .map(|e| e.position())
-                    .collect();
+                snapshot = world.enemies().iter().map(|e| e.position()).collect();
             }
         }
         self.rebuild_enemy_animation_state(snapshot);
@@ -1393,7 +1432,8 @@ fn spawn_random_enemies(
             let mut ennemi = Ennemi::nouveau(next_id, Position { x, y });
             if is_spirale2 {
                 let stats = ennemi.stats_mut();
-                stats.attaque *= 2;
+                stats.attaque = stats.attaque.saturating_mul(2);
+                stats.vie = stats.vie.saturating_mul(2);
             }
             world.add_enemy(ennemi);
             next_id += 1;
@@ -1462,6 +1502,7 @@ fn parse_tile_value(token: &str) -> Result<TileType, String> {
         .parse()
         .map_err(|_| format!("Valeur de tuile invalide: {}", token))?;
     match value {
+        -5 => Ok(TileType::VictoryChest),
         -4 => Ok(TileType::Coffre),
         -3 => Ok(TileType::CollisionInvisible),
         -2 => Ok(TileType::Maison),
@@ -1535,7 +1576,16 @@ fn build_walkable_map(tiles: &[Vec<TileType>]) -> Vec<Vec<bool>> {
         .iter()
         .map(|row| {
             row.iter()
-                .map(|tile| matches!(tile, TileType::Herbe | TileType::Chemin | TileType::Portal | TileType::SpiralPortal | TileType::SpiralPortal2) && !matches!(tile, TileType::CollisionInvisible))
+                .map(|tile| {
+                    matches!(
+                        tile,
+                        TileType::Herbe
+                            | TileType::Chemin
+                            | TileType::Portal
+                            | TileType::SpiralPortal
+                            | TileType::SpiralPortal2
+                    ) && !matches!(tile, TileType::CollisionInvisible)
+                })
                 .collect::<Vec<bool>>()
         })
         .collect()

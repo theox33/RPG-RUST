@@ -7,7 +7,7 @@ pub struct DamagePopup {
     x: f32,
     y: f32,
 }
-use macroquad::prelude::{draw_text, draw_rectangle, DARKGRAY, LIGHTGRAY, RED, GREEN, Color};
+use macroquad::prelude::{draw_rectangle, draw_text, Color, DARKGRAY, GREEN, LIGHTGRAY, RED};
 // ...existing code...
 
 // ...existing code...
@@ -97,28 +97,34 @@ impl CombatState {
         self.enemy_idx
     }
 
-    pub fn update(&mut self, world: &mut World, input: &CombatInput, origin_x: f32, origin_y: f32) -> CombatResolution {
-                // Nettoyage des popups
-                self._damage_popups.retain(|p| p.timer > 0.0);
-                for popup in &mut self._damage_popups {
-                    popup.timer -= 1.0 / 60.0;
-                    popup.y -= 0.5; // effet flottant
-                }
+    pub fn update(
+        &mut self,
+        world: &mut World,
+        input: &CombatInput,
+        origin_x: f32,
+        origin_y: f32,
+    ) -> CombatResolution {
+        // Nettoyage des popups
+        self._damage_popups.retain(|p| p.timer > 0.0);
+        for popup in &mut self._damage_popups {
+            popup.timer -= 1.0 / 60.0;
+            popup.y -= 0.5; // effet flottant
+        }
 
-                if let Some(result) = self.pending_result.clone() {
-                    if self.result_delay > 0.0 {
-                        self.result_delay -= 1.0 / 60.0;
-                        return CombatResolution {
-                            messages: Vec::new(),
-                            transition: CombatTransition::Continue,
-                        };
-                    }
-                    self.pending_result = None;
-                    return CombatResolution {
-                        messages: Vec::new(),
-                        transition: CombatTransition::Terminer(result),
-                    };
-                }
+        if let Some(result) = self.pending_result.clone() {
+            if self.result_delay > 0.0 {
+                self.result_delay -= 1.0 / 60.0;
+                return CombatResolution {
+                    messages: Vec::new(),
+                    transition: CombatTransition::Continue,
+                };
+            }
+            self.pending_result = None;
+            return CombatResolution {
+                messages: Vec::new(),
+                transition: CombatTransition::Terminer(result),
+            };
+        }
         self.update_buttons(input.tile_size, input.world_height, origin_x, origin_y);
         let mut messages = Vec::new();
 
@@ -145,8 +151,11 @@ impl CombatState {
                             if let Some(enemy) = world.enemies_mut().get_mut(self.enemy_idx) {
                                 enemy.inflige_degats(damage);
                                 // Popup dégâts infligés à l'ennemi (vert)
-                                let ex = origin_x + enemy.position().x as f32 * input.tile_size + input.tile_size * 0.5;
-                                let ey = origin_y + enemy.position().y as f32 * input.tile_size - 12.0;
+                                let ex = origin_x
+                                    + enemy.position().x as f32 * input.tile_size
+                                    + input.tile_size * 0.5;
+                                let ey =
+                                    origin_y + enemy.position().y as f32 * input.tile_size - 12.0;
                                 self._damage_popups.push(DamagePopup {
                                     value: damage as i32,
                                     timer: 0.8,
@@ -277,7 +286,8 @@ impl CombatState {
             if let Some(player) = world.players_mut().get_mut(self.player_idx) {
                 player.inflige_degats(damage);
                 // Popup dégâts subis par le joueur (rouge)
-                let px = origin_x + player.position().x as f32 * input.tile_size + input.tile_size * 0.5;
+                let px =
+                    origin_x + player.position().x as f32 * input.tile_size + input.tile_size * 0.5;
                 let py = origin_y + player.position().y as f32 * input.tile_size - 12.0;
                 self._damage_popups.push(DamagePopup {
                     value: -(damage as i32),
@@ -341,18 +351,22 @@ impl CombatState {
     }
 
     pub fn draw_ui(&self, world: &World, tile_size: f32, origin_x: f32, origin_y: f32) {
-                // Affichage des popups de dégâts
-                for popup in &self._damage_popups {
-                    let txt = if popup.value > 0 {
-                        format!("+{}", popup.value)
-                    } else {
-                        format!("{}", popup.value)
-                    };
-                    draw_text(&txt, popup.x - 12.0, popup.y, 22.0, popup.color);
-                }
+        // Affichage des popups de dégâts
+        for popup in &self._damage_popups {
+            let txt = if popup.value > 0 {
+                format!("+{}", popup.value)
+            } else {
+                format!("{}", popup.value)
+            };
+            draw_text(&txt, popup.x - 12.0, popup.y, 22.0, popup.color);
+        }
         let p = &world.players()[self.player_idx];
         let e = &world.enemies()[self.enemy_idx];
-        let status = format!("Joueur PV: {}   Ennemi PV: {}", p.stats().vie, e.stats().vie);
+        let status = format!(
+            "Joueur PV: {}   Ennemi PV: {}",
+            p.stats().vie,
+            e.stats().vie
+        );
         let margin = 16.0;
         let btn_w = 160.0;
         let btn_h = 36.0;
@@ -403,7 +417,13 @@ impl CombatState {
         None
     }
 
-    fn update_buttons(&mut self, tile_size: f32, world_height: usize, origin_x: f32, origin_y: f32) {
+    fn update_buttons(
+        &mut self,
+        tile_size: f32,
+        world_height: usize,
+        origin_x: f32,
+        origin_y: f32,
+    ) {
         let margin = 16.0;
         let btn_w = 160.0;
         let btn_h = 36.0;

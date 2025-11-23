@@ -15,7 +15,13 @@ pub enum HealthBarAnchor {
 }
 
 impl HealthBar {
-    pub fn new(width: f32, height: f32, margin: f32, max_value: u32, anchor: HealthBarAnchor) -> Self {
+    pub fn new(
+        width: f32,
+        height: f32,
+        margin: f32,
+        max_value: u32,
+        anchor: HealthBarAnchor,
+    ) -> Self {
         Self {
             width,
             height,

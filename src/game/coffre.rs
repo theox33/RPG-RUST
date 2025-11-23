@@ -106,7 +106,13 @@ impl ChestSystem {
             return;
         }
         let rect = prompt_rect();
-        draw_rectangle(rect.x, rect.y, rect.w, rect.h, Color::new(0.15, 0.15, 0.2, 0.75));
+        draw_rectangle(
+            rect.x,
+            rect.y,
+            rect.w,
+            rect.h,
+            Color::new(0.15, 0.15, 0.2, 0.75),
+        );
         draw_rectangle_lines(rect.x, rect.y, rect.w, rect.h, 2.0, WHITE);
         let label = "Ouvrir le coffre";
         let text_x = rect.x + 18.0;
@@ -119,11 +125,12 @@ impl ChestSystem {
             self.active = None;
             return;
         };
-        let next = self
-            .chests
-            .iter()
-            .enumerate()
-            .find(|(_, chest)| !chest.opened && !chest.animating && !chest.removed && is_adjacent(player_pos, chest.position));
+        let next = self.chests.iter().enumerate().find(|(_, chest)| {
+            !chest.opened
+                && !chest.animating
+                && !chest.removed
+                && is_adjacent(player_pos, chest.position)
+        });
         self.active = next.map(|(idx, _)| idx);
     }
 
@@ -131,14 +138,17 @@ impl ChestSystem {
         self.active = None;
     }
 
-    pub fn handle_click(&mut self, click_pos: Vec2) -> bool {
+    pub fn handle_click(&mut self, click_pos: Vec2) -> Option<Position> {
         let Some(idx) = self.active else {
-            return false;
+            return None;
         };
         if prompt_rect().contains(click_pos) {
-            return self.open_chest(idx);
+            let position = self.chests.get(idx).map(|c| c.position);
+            if self.open_chest(idx) {
+                return position;
+            }
         }
-        false
+        None
     }
 
     pub fn update_animation(&mut self, dt: f32, frame_count: usize) {
@@ -249,7 +259,7 @@ fn detect_chest_positions(tiles: &[Vec<TileType>]) -> Vec<Position> {
     let mut chests = Vec::new();
     for y in 0..MAP_HEIGHT {
         for x in 0..MAP_WIDTH {
-            if matches!(tiles[y][x], TileType::Coffre) {
+            if matches!(tiles[y][x], TileType::Coffre | TileType::VictoryChest) {
                 chests.push(Position { x, y });
             }
         }
