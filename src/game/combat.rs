@@ -74,6 +74,10 @@ impl CombatState {
         state
     }
 
+    pub fn enemy_index(&self) -> usize {
+        self.enemy_idx
+    }
+
     pub fn update(&mut self, world: &mut World, input: &CombatInput) -> CombatResolution {
         self.update_buttons(input.tile_size, input.world_height);
         let mut messages = Vec::new();
@@ -154,7 +158,20 @@ impl CombatState {
         let enemy_alive = world.enemies()[self.enemy_idx].est_vivant();
         if !player_alive || !enemy_alive {
             let result = match (player_alive, enemy_alive) {
-                (true, false) => CombatResult::JoueurVainqueur,
+                (true, false) => {
+                    if let Some(player) = world.players_mut().get_mut(self.player_idx) {
+                        if let Some(gain) = player.gain_vie_if_lucky() {
+                            messages.push(CombatMessage {
+                                texte: format!(
+                                    "Vous récupérez {} PV en fouillant l'ennemi vaincu.",
+                                    gain
+                                ),
+                                duree: 1.6,
+                            });
+                        }
+                    }
+                    CombatResult::JoueurVainqueur
+                }
                 (false, true) => CombatResult::EnnemiVainqueur,
                 (false, false) => CombatResult::DoubleKo,
                 _ => CombatResult::DoubleKo,
@@ -198,7 +215,20 @@ impl CombatState {
         let enemy_alive = world.enemies()[self.enemy_idx].est_vivant();
         if !player_alive || !enemy_alive {
             let result = match (player_alive, enemy_alive) {
-                (true, false) => CombatResult::JoueurVainqueur,
+                (true, false) => {
+                    if let Some(player) = world.players_mut().get_mut(self.player_idx) {
+                        if let Some(gain) = player.gain_vie_if_lucky() {
+                            messages.push(CombatMessage {
+                                texte: format!(
+                                    "Vous récupérez {} PV en fouillant l'ennemi vaincu.",
+                                    gain
+                                ),
+                                duree: 1.6,
+                            });
+                        }
+                    }
+                    CombatResult::JoueurVainqueur
+                }
                 (false, true) => CombatResult::EnnemiVainqueur,
                 (false, false) => CombatResult::DoubleKo,
                 _ => CombatResult::DoubleKo,

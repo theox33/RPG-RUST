@@ -1,4 +1,5 @@
 use crate::types::{Combatant, Position, Stats, PLAYER_BASE_STATS};
+use rand::Rng;
 
 #[derive(Clone, Debug)]
 pub struct Joueur {
@@ -13,6 +14,18 @@ impl Joueur {
             id,
             stats: PLAYER_BASE_STATS,
             pos,
+        }
+    }
+
+    pub fn gain_vie_if_lucky(&mut self) -> Option<u32> {
+        let mut rng = rand::thread_rng();
+        if rng.gen_bool(0.5) {
+            let gain = rng.gen_range(10..=40);
+            let stats = self.stats_mut();
+            stats.vie = stats.vie.saturating_add(gain);
+            Some(gain)
+        } else {
+            None
         }
     }
 }

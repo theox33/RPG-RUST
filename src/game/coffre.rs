@@ -19,6 +19,7 @@ pub struct ChestState {
     fading: bool,
     fade_timer: f32,
     removed: bool,
+    reward_pending: bool,
 }
 
 impl ChestState {
@@ -32,6 +33,7 @@ impl ChestState {
             fading: false,
             fade_timer: 0.0,
             removed: false,
+            reward_pending: false,
         }
     }
 
@@ -166,6 +168,7 @@ impl ChestSystem {
                         // start fade-out immediately after fully opened
                         chest.fading = true;
                         chest.fade_timer = 0.0;
+                        chest.reward_pending = true;
                         break;
                     }
                 }
@@ -214,6 +217,17 @@ impl ChestSystem {
         if !self.chests.is_empty() {
             self.cache.insert(world, self.chests.clone());
         }
+    }
+
+    pub fn collect_opened_rewards(&mut self) -> Vec<Position> {
+        let mut rewards = Vec::new();
+        for chest in &mut self.chests {
+            if chest.reward_pending {
+                chest.reward_pending = false;
+                rewards.push(chest.position);
+            }
+        }
+        rewards
     }
 
     fn open_chest(&mut self, idx: usize) -> bool {

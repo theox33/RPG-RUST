@@ -144,6 +144,7 @@ struct EnemyAnim {
 struct Message {
     texte: String,
     timer: f32,
+    centered: bool,
 }
 
 enum GameState {
@@ -501,6 +502,7 @@ impl Game {
             self.messages.push(Message {
                 texte: String::from("Vous vous déplacez."),
                 timer: 0.6,
+                centered: false,
             });
             if matches!(self.map_tiles[new_pos.y][new_pos.x], TileType::Portal) {
                 self.trigger_portal_transition();
@@ -534,6 +536,7 @@ impl Game {
         self.messages.push(Message {
             texte: message.to_string(),
             timer: 1.2,
+            centered: false,
         });
         world.enemies_frozen = true;
         let player_speed = world.players()[0].vitesse();
@@ -582,20 +585,41 @@ impl Game {
             self.messages.push(Message {
                 texte: msg.texte,
                 timer: msg.duree,
+                centered: false,
             });
         }
-        match transition {
+        let mut rebuild_positions: Option<Vec<Position>> = None;
+        let continue_fight = match transition {
             CombatTransition::Continue => true,
             CombatTransition::Terminer(result) => {
+                if matches!(result, CombatResult::JoueurVainqueur | CombatResult::DoubleKo) {
+                    let enemy_idx = state.enemy_index();
+                    if enemy_idx < world.enemies.len() {
+                        world.enemies.remove(enemy_idx);
+                        rebuild_positions = Some(
+                            world
+                                .enemies()
+                                .iter()
+                                .map(|e| e.position())
+                                .collect(),
+                        );
+                    }
+                }
                 if let CombatResult::EnnemiVainqueur | CombatResult::DoubleKo = result {
                     self.messages.push(Message {
                         texte: String::from("Vous êtes vaincu..."),
                         timer: 2.0,
+                        centered: false,
                     });
                 }
                 false
             }
+        };
+        drop(world);
+        if let Some(positions) = rebuild_positions {
+            self.rebuild_enemy_animation_state(positions);
         }
+        continue_fight
     }
 
     fn collect_combat_keys(&self) -> Vec<KeyCode> {
@@ -691,6 +715,10 @@ impl Game {
     fn update_chest_animation(&mut self, dt: f32) {
         self.chests
             .update_animation(dt, self.textures.chest_frames.len());
+        let rewards = self.chests.collect_opened_rewards();
+        for _ in rewards {
+            self.apply_player_attack_bonus();
+        }
     }
 
     fn update_chest_prompt(&mut self) {
@@ -718,6 +746,7 @@ impl Game {
             self.messages.push(Message {
                 texte: String::from("Vous ouvrez le coffre."),
                 timer: 1.2,
+                centered: false,
             });
         }
     }
@@ -805,10 +834,39 @@ impl Game {
 
     fn draw_messages(&self) {
         let mut y = 30.0;
-        for msg in &self.messages {
+        for msg in self.messages.iter().filter(|m| !m.centered) {
             draw_text(&msg.texte, 20.0, y, 22.0, DARKGRAY);
             y += 24.0;
         }
+
+        let centered: Vec<&Message> = self.messages.iter().filter(|m| m.centered).collect();
+        let total = centered.len();
+        if total > 0 {
+            let stack_spacing = 16.0;
+            let box_height = 64.0;
+            for (idx, msg) in centered.into_iter().enumerate() {
+                let offset = (idx as f32 - (total as f32 - 1.0) * 0.5) * (box_height + stack_spacing);
+                self.draw_centered_message(&msg.texte, offset);
+            }
+        }
+    }
+
+    fn draw_centered_message(&self, texte: &str, offset_y: f32) {
+        let font_size: u16 = 32;
+        let dims = measure_text(texte, None, font_size, 1.0);
+        let padding_x = 36.0;
+        let padding_y = 22.0;
+        let box_w = dims.width + padding_x * 2.0;
+        let box_h = dims.height + padding_y * 2.0;
+        let center_x = screen_width() * 0.5;
+        let center_y = screen_height() * 0.5 + offset_y;
+        let rect_x = center_x - box_w * 0.5;
+        let rect_y = center_y - box_h * 0.5;
+        draw_rectangle(rect_x, rect_y, box_w, box_h, Color::new(0.0, 0.0, 0.0, 0.9));
+        draw_rectangle_lines(rect_x, rect_y, box_w, box_h, 2.0, WHITE);
+        let text_x = center_x - dims.width * 0.5;
+        let text_y = center_y + dims.height * 0.5 - dims.offset_y;
+        draw_text(texte, text_x, text_y, font_size as f32, WHITE);
     }
 
     fn draw_houses(&self, origin_x: f32, origin_y: f32) {
@@ -933,6 +991,7 @@ impl Game {
             self.messages.push(Message {
                 texte: target.entry_message().to_string(),
                 timer: 1.2,
+                centered: false,
             });
         }
     }
@@ -961,6 +1020,26 @@ impl Game {
 
     fn store_current_world_chests(&mut self) {
         self.chests.store_world_snapshot(self.current_world);
+    }
+
+    fn apply_player_attack_bonus(&mut self) {
+        let mut values = None;
+        if let Ok(mut world) = self.world.lock() {
+            if let Some(player) = world.players_mut().get_mut(0) {
+                let stats = player.stats_mut();
+                let before = stats.attaque;
+                let after = stats.attaque.saturating_mul(2);
+                stats.attaque = after;
+                values = Some((before, after));
+            }
+        }
+        if let Some((before, after)) = values {
+            self.messages.push(Message {
+                texte: format!("Votre attaque passe de {} à {} !", before, after),
+                timer: 2.5,
+                centered: true,
+            });
+        }
     }
 }
 
