@@ -22,7 +22,7 @@ impl Joueur {
         if rng.gen_bool(0.5) {
             let gain = rng.gen_range(10..=40);
             let stats = self.stats_mut();
-            stats.vie = stats.vie.saturating_add(gain);
+            stats.vie = stats.vie.saturating_add(gain).min(PLAYER_BASE_STATS.vie);
             Some(gain)
         } else {
             None

@@ -1,12 +1,14 @@
 pub mod combat;
+mod healthbar;
 mod coffre;
 
 use crate::ennemi::Ennemi;
 use crate::joueur::Joueur;
-use crate::types::{Combatant, Position};
+use crate::types::{Combatant, Position, PLAYER_BASE_STATS};
 use crate::world::World;
 use ::rand::{thread_rng, Rng};
 use combat::{CombatInput, CombatResolution, CombatResult, CombatState, CombatTransition};
+use healthbar::{HealthBar, HealthBarAnchor};
 use macroquad::prelude::*;
 use coffre::ChestSystem;
 use std::collections::HashMap;
@@ -172,6 +174,7 @@ pub struct Game {
     chemin_choice: Vec<Vec<usize>>,
     enemy_anim: Vec<EnemyAnim>,
     enemy_prev_positions: Vec<Position>,
+    health_bar: HealthBar,
 }
 
 impl Game {
@@ -296,6 +299,7 @@ impl Game {
             chemin_choice: vec![vec![0; MAP_WIDTH]; MAP_HEIGHT],
             enemy_anim: Vec::new(),
             enemy_prev_positions: Vec::new(),
+            health_bar: HealthBar::new(260.0, 28.0, 20.0, PLAYER_BASE_STATS.vie, HealthBarAnchor::TopRight),
         };
 
         game.refresh_map_variants();
@@ -646,6 +650,15 @@ impl Game {
         }
         self.draw_messages();
         self.chests.draw_prompt();
+        self.draw_health_bar();
+    }
+
+    fn draw_health_bar(&self) {
+        if let Ok(world) = self.world.lock() {
+            if let Some(player) = world.players().get(0) {
+                self.health_bar.draw(player.stats());
+            }
+        }
     }
 
     fn world_origin(&self) -> (f32, f32) {
